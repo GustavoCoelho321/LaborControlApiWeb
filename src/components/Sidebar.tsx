@@ -1,4 +1,4 @@
-import { BarChart3, Users, Package, Settings, LogOut, ChevronRight, Layers, UserCircle2 } from 'lucide-react';
+import { BarChart3, Users, Package, Settings, LogOut, ChevronRight, Layers, UserCircle2, CalendarClock } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import dhlLogo from '../assets/Dhl_Logo.png'; 
 
@@ -14,7 +14,6 @@ export function Sidebar() {
   };
 
   return (
-    // VOLTEI PARA w-64 AQUI (Era w-72)
     <aside className="w-64 bg-white h-screen fixed left-0 top-0 shadow-2xl flex flex-col z-50 transition-all duration-300 border-r border-gray-100 font-sans">
       
       {/* --- LOGO AREA --- */}
@@ -30,16 +29,18 @@ export function Sidebar() {
       {/* --- MENU --- */}
       <nav className="flex-1 px-3 py-6 space-y-2 overflow-y-auto scrollbar-hide">
         
-        {/* Operacional */}
+        {/* GRUPO OPERACIONAL (AQUI QUE MUDOU) */}
         <div className="mb-6">
           <p className="px-4 text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Operacional</p>
           <div className="space-y-1">
             <NavItem to="/dashboard" icon={<BarChart3 size={18} />} label="Dashboard" active={location.pathname === '/dashboard'} />
             <NavItem to="/planning" icon={<Package size={18} />} label="Planejamento" active={location.pathname === '/planning'} />
+            {/* NOVO LINK ADICIONADO AQUI: */}
+            <NavItem to="/scheduler" icon={<CalendarClock size={18} />} label="Gestão Hora a Hora" active={location.pathname === '/scheduler'} />
           </div>
         </div>
 
-        {/* Admin */}
+        {/* Grupo Administrativo */}
         <div>
           <p className="px-4 text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Administração</p>
           <div className="space-y-1">
