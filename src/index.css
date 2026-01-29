@@ -1,0 +1,11 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Estilo global profissional */
+body {
+  background-color: #F2F2F2;
+  font-family: 'Inter', system-ui, sans-serif;
+  color: #333;
+  margin: 0;
+}
