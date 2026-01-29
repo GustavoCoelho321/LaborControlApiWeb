@@ -1,40 +1,65 @@
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Outlet, Navigate } from 'react-router-dom';
 
-// Importe a Sidebar que acabamos de criar
-import { Sidebar } from './components/SideBar'; // <--- Ajuste o caminho se necessário
+// --- COMPONENTES DE ESTRUTURA ---
+import { Sidebar } from './components/SideBar';
 
-// Importação das Páginas
+// --- IMPORTAÇÃO DAS PÁGINAS ---
+import { Login } from './pages/Login'; // <--- Nova importação
 import { Dashboard } from './pages/Dashboard';
 import { Scheduler } from './pages/Scheduler';
 import { Planning } from './pages/Planning';
 import { RegisterUser } from './pages/RegisterUser';
 import { RegisterProcess } from './pages/RegisterProcess';
 
+// --- LAYOUT PROTEGIDO (Com Sidebar) ---
+// Este componente serve de "casca" para todas as páginas internas
+function PrivateLayout() {
+  // Verificação simples de autenticação (pode ser melhorada com Context API depois)
+  const isAuthenticated = !!localStorage.getItem('token');
+
+  // Se não estiver logado, chuta para o login
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />;
+  }
+
+  return (
+    <div className="flex min-h-screen bg-gray-100 font-sans text-gray-900">
+      {/* Sidebar Fixa */}
+      <Sidebar />
+
+      {/* Área de Conteúdo (com margem para não ficar embaixo da sidebar) */}
+      <div className="flex-1 ml-64 transition-all duration-300">
+        <div className="p-8 max-w-[1920px] mx-auto">
+          {/* O <Outlet /> renderiza a rota filha atual (Dashboard, Scheduler, etc.) */}
+          <Outlet />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// --- APP PRINCIPAL ---
 export function App() {
   return (
     <Router>
-      <div className="flex min-h-screen bg-gray-100 font-sans text-gray-900">
+      <Routes>
         
-        {/* 1. A Sidebar fica fixa aqui */}
-        <Sidebar />
+        {/* ROTA PÚBLICA (Sem Sidebar) */}
+        <Route path="/login" element={<Login />} />
 
-        {/* 2. O Conteúdo principal tem uma margem à esquerda (ml-64) para não ficar embaixo da Sidebar */}
-        <div className="flex-1 ml-64 transition-all duration-300">
-          <div className="p-8 max-w-[1920px] mx-auto">
-            
-            {/* 3. As rotas trocam apenas o conteúdo desta área */}
-            <Routes>
-              <Route path="/" element={<Dashboard />} />
-              <Route path="/scheduler" element={<Scheduler />} />
-              <Route path="/planning" element={<Planning />} />
-              <Route path="/processes" element={<RegisterProcess />} />
-              <Route path="/register" element={<RegisterUser />} />
-              {/* Adicione rota de login se tiver: <Route path="/login" element={<Login />} /> */}
-            </Routes>
+        {/* ROTAS PROTEGIDAS (Com Sidebar) */}
+        <Route element={<PrivateLayout />}>
+          <Route path="/" element={<Dashboard />} />
+          <Route path="/scheduler" element={<Scheduler />} />
+          <Route path="/planning" element={<Planning />} />
+          <Route path="/processes" element={<RegisterProcess />} />
+          <Route path="/register" element={<RegisterUser />} />
+        </Route>
 
-          </div>
-        </div>
-      </div>
+        {/* Rota de Catch-all (Redireciona qualquer url errada para o home/login) */}
+        <Route path="*" element={<Navigate to="/" replace />} />
+
+      </Routes>
     </Router>
   );
 }
