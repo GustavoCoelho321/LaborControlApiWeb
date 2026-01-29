@@ -1,53 +1,41 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { Login } from './pages/Login';
-import { MainLayout } from './layouts/MainLayout';
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+
+// Importe a Sidebar que acabamos de criar
+import { Sidebar } from './components/SideBar'; // <--- Ajuste o caminho se necessário
+
+// Importação das Páginas
+import { Dashboard } from './pages/Dashboard';
+import { Scheduler } from './pages/Scheduler';
+import { Planning } from './pages/Planning';
 import { RegisterUser } from './pages/RegisterUser';
 import { RegisterProcess } from './pages/RegisterProcess';
-import { Planning } from './pages/Planning';
-import { Scheduler } from './pages/Scheduler'; // <--- IMPORTANTE: Importei a nova tela aqui
 
-// Placeholder para telas que ainda não fizemos (Dashboard e Settings)
-const Dashboard = () => (
-  <div className="p-4">
-    <h1 className="text-2xl font-bold text-gray-800">Dashboard Operacional</h1>
-    <p className="text-gray-500">Gráficos e indicadores serão implementados aqui.</p>
-  </div>
-);
-
-const Settings = () => (
-  <div className="p-4">
-    <h1 className="text-2xl font-bold text-gray-800">Configurações Gerais</h1>
-    <p className="text-gray-500">Parâmetros do sistema.</p>
-  </div>
-);
-
-function App() {
+export function App() {
   return (
-    <BrowserRouter>
-      <Routes>
-        {/* --- ROTA PÚBLICA (Login) --- */}
-        <Route path="/" element={<Login />} />
+    <Router>
+      <div className="flex min-h-screen bg-gray-100 font-sans text-gray-900">
+        
+        {/* 1. A Sidebar fica fixa aqui */}
+        <Sidebar />
 
-        {/* --- ROTAS PRIVADAS (Com Sidebar e Header) --- */}
-        <Route element={<MainLayout />}>
-          
-          <Route path="/dashboard" element={<Dashboard />} />
-          
-          {/* Telas Operacionais */}
-          <Route path="/planning" element={<Planning />} />
-          <Route path="/scheduler" element={<Scheduler />} /> {/* <--- NOVA ROTA REGISTRADA */}
-          
-          {/* Telas Administrativas */}
-          <Route path="/users" element={<RegisterUser />} />
-          <Route path="/processes" element={<RegisterProcess />} />
-          <Route path="/settings" element={<Settings />} />
+        {/* 2. O Conteúdo principal tem uma margem à esquerda (ml-64) para não ficar embaixo da Sidebar */}
+        <div className="flex-1 ml-64 transition-all duration-300">
+          <div className="p-8 max-w-[1920px] mx-auto">
+            
+            {/* 3. As rotas trocam apenas o conteúdo desta área */}
+            <Routes>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/scheduler" element={<Scheduler />} />
+              <Route path="/planning" element={<Planning />} />
+              <Route path="/processes" element={<RegisterProcess />} />
+              <Route path="/register" element={<RegisterUser />} />
+              {/* Adicione rota de login se tiver: <Route path="/login" element={<Login />} /> */}
+            </Routes>
 
-        </Route>
-
-        {/* Redireciona qualquer rota inválida para o login */}
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-    </BrowserRouter>
+          </div>
+        </div>
+      </div>
+    </Router>
   );
 }
 
