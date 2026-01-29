@@ -1,73 +1,136 @@
-# React + TypeScript + Vite
+# 💻 Labor Control Web App
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+**Versão:** 1.0.0  
+**Stack:** React 18, Vite, Tailwind CSS, TypeScript  
+**Tipo:** Single Page Application (SPA)
 
-Currently, two official plugins are available:
+---
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## 1. Visão Geral
 
-## React Compiler
+O **Labor Control Web** é a interface de usuário do sistema de WFM (Workforce Management). Ele fornece painéis interativos, simuladores de escala e ferramentas administrativas para gestão operacional.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+O sistema consome a **Labor Control API** (.NET) e foca em performance, usabilidade e visualização de dados em tempo real.
 
-## Expanding the ESLint configuration
+---
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+## 🛠️ Tech Stack
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+- **Core:** React 18 + Vite  
+- **Linguagem:** TypeScript / JavaScript (ES6+)  
+- **Estilização:** Tailwind CSS  
+- **Roteamento:** React Router DOM v6  
+- **HTTP Client:** Axios  
+- **Gráficos:** Recharts  
+- **Ícones:** Lucide React  
+- **Excel:** SheetJS (XLSX)
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+---
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+## 2. Estrutura do Projeto
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+```bash
+src/
+├── assets/          # Imagens, logos e arquivos estáticos
+├── components/      # Componentes reutilizáveis
+├── pages/           # Telas principais
+│   ├── Dashboard.tsx
+│   ├── Scheduler.tsx
+│   ├── Login.tsx
+│   ├── RegisterUser.tsx
+│   └── RegisterProcess.tsx
+├── services/
+│   └── api.ts       # Axios + Interceptors
+├── App.tsx          # Rotas e Layouts
+└── main.tsx         # Entry point
+3. Funcionalidades Principais
+📊 Dashboard (Control Tower)
+Painel de monitoramento em tempo real:
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+KPIs: Volume (In/Out), Backlog, Headcount
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+Gráfico Boca de Jacaré (Entrada vs Saída)
+
+Alertas de gargalo operacional
+
+📅 Scheduler (Simulador Inteligente)
+Core do planejamento:
+
+Turnos: T1, T2, T3
+
+IA Smooth Week (zera backlog até domingo 14h)
+
+Eficiência automática (refeições = 50%)
+
+Exportação para Excel
+
+🔐 Segurança & Admin
+Login via JWT
+
+Rotas protegidas (PrivateLayout)
+
+Cadastro de usuários e processos
+
+4. Instalação e Execução
+Pré-requisitos
+Node.js v18+
+
+NPM ou Yarn
+
+Instalação
+npm install
+Variáveis de Ambiente
+Crie um arquivo .env:
+
+VITE_API_URL=https://localhost:7000/api
+Rodar em desenvolvimento
+npm run dev
+Acesse:
+http://localhost:5173
+
+5. Guia de Desenvolvimento
+Criar Nova Página
+Crie em src/pages/NovaTela.tsx
+
+Adicione rota em App.tsx
+
+Adicione no menu em Sidebar.tsx
+
+Consumir API
+Sempre use a instância central:
+
+import { api } from '../services/api';
+
+async function getData() {
+  const response = await api.get('/endpoint');
+  console.log(response.data);
+}
+6. Build e Deploy
+Build de Produção
+npm run build
+Gera a pasta /dist.
+
+Deploy
+Pode ser hospedado em:
+
+AWS S3 + CloudFront
+
+Vercel / Netlify
+
+Nginx / Apache
+
+Azure Static Web Apps
+
+📌 Padrões de Arquitetura
+SPA com rotas protegidas
+
+Componentização total
+
+Separação por responsabilidade
+
+API-first (backend independente)
+
+📄 Licença
+Labor Control Web © 2026
+Interface Operacional de Workforce Management.
+
