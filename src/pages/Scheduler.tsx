@@ -7,7 +7,7 @@ import {
   ArrowDownCircle, ArrowUpCircle, AlertTriangle, 
   Wand2, CheckCircle2,
   CornerDownRight, Clock, GripVertical, TrendingUp,
-  ArrowRight, Trash2, Calendar
+  ArrowRight, Trash2, Calendar, Cpu, Sparkles
 } from 'lucide-react';
 
 // --- INTERFACES ---
@@ -54,7 +54,7 @@ interface DayScenario {
 const DAYS_OF_WEEK = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"];
 const DEFAULT_ORDER = ["Recebimento", "PutWay", "Picking", "Sorting Aut", "Sorting Manual", "Packing", "Handover Last Mile"];
 const LOW_EFFICIENCY_HOURS = [0, 1, 11, 12, 18, 19];
-const LOCAL_STORAGE_KEY = 'labor_control_week_cache_v5_fix300k'; // Chave nova para forçar a nova lógica
+const LOCAL_STORAGE_KEY = 'labor_control_week_cache_v9_branch_merge'; 
 
 export function Scheduler() {
   const [loading, setLoading] = useState(false);
@@ -87,7 +87,7 @@ export function Scheduler() {
   useEffect(() => { loadProcesses(); }, []);
 
   useEffect(() => {
-    if (weekData && weekData.length > 0 && processOrder.length > 0) {
+    if (weekData.length > 0 && processOrder.length > 0) {
         localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(weekData));
     }
   }, [weekData, processOrder]);
@@ -130,7 +130,7 @@ export function Scheduler() {
   }
 
   const handleResetData = () => {
-    if(!confirm("Isso apagará o planejamento atual. Confirmar?")) return;
+    if(!confirm("Resetar planejamento?")) return;
     localStorage.removeItem(LOCAL_STORAGE_KEY);
     window.location.reload(); 
   };
@@ -180,25 +180,59 @@ export function Scheduler() {
     const daysHours: Record<number, number[]> = {};
     const daysPeakHc: Record<number, number> = {}; 
     
+    // Armazena output real para o fluxo: Map<ProcessID, Matriz[Dia][Hora]>
+    const outputsByProcess: Record<number, number[][]> = {};
+    
+    // Identifica IDs
+    let pickingId: number | null = null;
+    const sortingIds: number[] = [];
+    processOrder.forEach(p => {
+        const name = p.name.toLowerCase();
+        outputsByProcess[p.id] = weekData.map(() => Array(24).fill(0)); // Inicializa
+        if (name.includes('picking') || name.includes('separação')) pickingId = p.id;
+        if (name.includes('sort') || name.includes('classificação')) sortingIds.push(p.id);
+    });
+
     weekData.forEach((dayData, dayIdx) => {
        const dayResults: Record<number, SimulationCell[]> = {};
        const hoursArray = Array.from({ length: 24 }, (_, i) => (dayData.shiftStart + i) % 24);
        daysHours[dayIdx] = hoursArray;
        const hourlyTotalHc = new Array(24).fill(0); 
-       let previousProcessOutput: number[] = hoursArray.map(() => dayData.volume / 24);
        
        let carryOverBacklogs: Record<number, number> = {};
 
        processOrder.forEach((proc, idx) => {
           const procCells: SimulationCell[] = [];
+          const procName = proc.name.toLowerCase();
+          const isReceiving = idx === 0; // Assume primeiro como Inbound
+          const isSorting = sortingIds.includes(proc.id);
+          const isPacking = procName.includes('packing') || procName.includes('embalagem');
+
           let currentBacklog = carryOverBacklogs[proc.id] || 0;
           const settings = dayData.parentSettings[Number(proc.id)] || { split: 100 };
-          const isTypeChange = idx > 0 && processOrder[idx-1].type === 'Inbound' && proc.type === 'Outbound';
-          const typeMultiplier = isTypeChange ? (dayData.consolidation / 100) : 1;
-          const finalMultiplier = typeMultiplier * (settings.split / 100);
+          const splitRatio = settings.split / 100;
 
           hoursArray.forEach((hour, hIdx) => {
-             const input = previousProcessOutput[hIdx] * finalMultiplier;
+             // LÓGICA DE INPUT (Branch & Merge)
+             let input = 0;
+             if (isReceiving) {
+                 input = dayData.volume / 24;
+             } else if (isSorting && pickingId) {
+                 // Sorting vem do Picking com Split
+                 input = outputsByProcess[pickingId][dayIdx][hour] * splitRatio;
+             } else if (isPacking) {
+                 // Packing vem da SOMA dos Sortings
+                 let totalSort = 0;
+                 sortingIds.forEach(sid => {
+                     totalSort += outputsByProcess[sid][dayIdx][hour];
+                 });
+                 input = totalSort;
+             } else {
+                 // Fluxo linear padrão
+                 const prevId = processOrder[idx - 1].id;
+                 input = outputsByProcess[prevId][dayIdx][hour] * splitRatio;
+             }
+
              let directHc = dayData.hcMatrix[`P-${proc.id}-${hour}`] || 0;
              let indirectHc = 0;
              if (proc.subprocesses) {
@@ -207,18 +241,23 @@ export function Scheduler() {
                 });
              }
              hourlyTotalHc[hIdx] += (directHc + indirectHc);
+             
              const efficiency = (dayData.efficiencyMatrix[hour] ?? 100) / 100;
              const capacity = directHc * proc.standardProductivity * efficiency;
+             
              const totalAvailable = input + currentBacklog;
              const output = Math.min(totalAvailable, capacity);
              const newBacklog = totalAvailable - output;
+             
+             // Salva output para o próximo processo usar
+             outputsByProcess[proc.id][dayIdx][hour] = output;
+             
              currentBacklog = newBacklog;
 
              procCells.push({ hour, input, efficiency: efficiency * 100, totalHc: directHc + indirectHc, directHc, indirectHc, capacity, output, backlog: newBacklog });
           });
           dayResults[proc.id] = procCells;
           carryOverBacklogs[proc.id] = currentBacklog;
-          previousProcessOutput = procCells.map(c => c.output);
        });
        fullWeekResults[dayIdx] = dayResults;
        daysPeakHc[dayIdx] = Math.max(...hourlyTotalHc);
@@ -227,7 +266,7 @@ export function Scheduler() {
   }, [weekData, processOrder]);
 
   const handleSmartDistributeWeek = () => {
-    if (!confirm("A IA irá recalcular. O Picking terá um limite rígido de 85k para evitar picos de 300k. Continuar?")) return;
+    if (!confirm("A IA irá calcular o HC. Regra: Teto de backlog de 85k no Picking. HC fixo em refeições. Continuar?")) return;
     const aiProcessInput = processOrder.map(p => ({
       id: Number(p.id), name: p.name, type: p.type, standardProductivity: p.standardProductivity,
       subprocesses: p.subprocesses ? p.subprocesses.map(s => ({ id: s.id, standardProductivity: s.standardProductivity })) : []
@@ -265,7 +304,6 @@ export function Scheduler() {
 
   return (
     <>
-    {/* ANIMAÇÕES GLOBAIS */}
     <style>{`
         @keyframes fade-in-up {
             from { opacity: 0; transform: translateY(20px); }
@@ -277,52 +315,95 @@ export function Scheduler() {
     `}</style>
 
     <div className="space-y-8 animate-fade-in-up pb-32">
-      <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 flex flex-col md:flex-row md:items-center justify-between gap-6">
-        <div>
-          <h1 className="text-3xl font-black text-gray-800 flex items-center gap-3">
-            <Calendar className="text-dhl-red" size={32} />
-            WFM Planner <span className="bg-gray-100 text-gray-500 text-xs px-2 py-1 rounded-full font-bold tracking-wide">AI 2.1</span>
-          </h1>
-          <p className="text-gray-500 text-sm mt-2 max-w-xl">
-            Planejamento inteligente com travas de segurança. Limite de backlog rígido para Picking.
-          </p>
-        </div>
-        <div className="flex items-center gap-4">
-           {/* KPIs */}
-           <div className="flex gap-4 border-r border-gray-200 pr-6 mr-2">
-               <div className="flex flex-col items-end">
-                  <span className="text-[10px] font-bold text-gray-400 uppercase">Backlog In</span>
-                  <span className={`text-lg font-bold ${dayBacklogIn > 0 ? 'text-red-500' : 'text-green-600'}`}>{(dayBacklogIn/1000).toFixed(1)}k</span>
-               </div>
-               <div className="flex flex-col items-end">
-                  <span className="text-[10px] font-bold text-gray-400 uppercase">Backlog Out</span>
-                  <span className={`text-lg font-bold ${dayBacklogOut > 130000 ? 'text-red-600' : 'text-green-600'}`}>{(dayBacklogOut/1000).toFixed(1)}k</span>
-               </div>
-               <div className="flex flex-col items-end">
-                  <span className="text-[10px] font-bold text-gray-400 uppercase">Pico HC</span>
-                  <span className="text-lg font-black text-gray-800">{activePeakHc}</span>
-               </div>
-           </div>
+      
+      {/* HEADER FUTURISTA */}
+      <div className="bg-white rounded-3xl p-1 shadow-sm border border-gray-100 relative overflow-hidden">
+        <div className="absolute top-0 right-0 w-64 h-64 bg-dhl-yellow/10 rounded-full blur-3xl -mr-16 -mt-16 pointer-events-none"></div>
+        
+        <div className="bg-white rounded-2xl p-6 relative z-10 flex flex-col md:flex-row items-center justify-between gap-6">
+            <div>
+                <h1 className="text-4xl font-black text-gray-800 tracking-tight flex items-center gap-3">
+                    WFM <span className="text-dhl-red">Planner</span>
+                </h1>
+                <p className="text-gray-500 font-medium mt-1">
+                    Simulador Inteligente. Flow Control (Branch & Merge).
+                </p>
+            </div>
 
-           <button onClick={handleResetData} className="h-10 w-10 flex items-center justify-center bg-gray-100 hover:bg-red-50 hover:text-red-600 text-gray-500 rounded-xl transition-all" title="Resetar Planejamento">
-            <Trash2 size={18} />
-           </button>
-           <button onClick={handleSmartDistributeWeek} className="h-10 px-6 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white rounded-xl font-bold shadow-lg shadow-purple-200 flex items-center gap-2 transition-all transform hover:-translate-y-0.5">
-            <Wand2 size={18} /> Calcular
-           </button>
-           <button onClick={handleExportExcel} className="h-10 px-6 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl font-bold shadow-lg shadow-emerald-200 flex items-center gap-2 transition-all">
-            <Save size={18} /> Exportar
-           </button>
+            <div className="flex items-center gap-4 bg-gray-900 text-white p-2 pr-6 rounded-2xl shadow-2xl shadow-purple-500/20 border border-gray-800">
+                <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg animate-pulse">
+                    <Cpu size={24} className="text-white" />
+                </div>
+                <div>
+                    <div className="text-[10px] font-bold text-purple-300 uppercase tracking-widest flex items-center gap-1">
+                        <Sparkles size={10} /> AI V9.0
+                    </div>
+                    <div className="text-sm font-bold text-gray-200">
+                        Topologia de Fluxo Ativa
+                    </div>
+                </div>
+            </div>
+
+            <div className="flex items-center gap-3">
+               <button onClick={handleResetData} className="h-12 w-12 flex items-center justify-center bg-gray-100 hover:bg-red-50 hover:text-red-600 text-gray-500 rounded-xl transition-all" title="Resetar">
+                <Trash2 size={20} />
+               </button>
+               <button onClick={handleSmartDistributeWeek} className="h-12 px-6 bg-dhl-red hover:bg-red-700 text-white rounded-xl font-bold shadow-lg shadow-red-200 flex items-center gap-2 transition-all transform hover:-translate-y-0.5">
+                <Wand2 size={20} /> Calcular
+               </button>
+               <button onClick={handleExportExcel} className="h-12 px-6 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl font-bold shadow-lg shadow-emerald-200 flex items-center gap-2 transition-all">
+                <Save size={20} />
+               </button>
+            </div>
         </div>
       </div>
 
-      <div className="relative w-full overflow-hidden">
-        {/* Adicionei padding no container pai e margin negativa para compensar visualmente, garantindo que o shadow apareça */}
-        <div className="flex gap-4 overflow-x-auto pb-6 pt-2 px-1 snap-x hide-scrollbar">
+      {/* KPI STRIP */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm flex items-center justify-between">
+              <div>
+                  <p className="text-xs font-bold text-gray-400 uppercase">Backlog Entrada</p>
+                  <p className={`text-2xl font-black ${dayBacklogIn > 0 ? 'text-red-500' : 'text-emerald-500'}`}>{(dayBacklogIn/1000).toFixed(1)}k</p>
+              </div>
+              <div className="p-2 bg-gray-50 rounded-lg text-gray-400"><ArrowDownCircle /></div>
+          </div>
+          <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm flex items-center justify-between">
+              <div>
+                  <p className="text-xs font-bold text-gray-400 uppercase">Backlog Saída</p>
+                  <p className={`text-2xl font-black ${dayBacklogOut > 130000 ? 'text-red-600' : 'text-emerald-500'}`}>{(dayBacklogOut/1000).toFixed(1)}k</p>
+              </div>
+              <div className="p-2 bg-gray-50 rounded-lg text-gray-400"><ArrowUpCircle /></div>
+          </div>
+          <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm flex items-center justify-between">
+              <div>
+                  <p className="text-xs font-bold text-gray-400 uppercase">Pico de Pessoas</p>
+                  <p className="text-2xl font-black text-gray-800">{activePeakHc}</p>
+              </div>
+              <div className="p-2 bg-gray-50 rounded-lg text-gray-400"><Users /></div>
+          </div>
+          <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm flex items-center justify-between">
+              <div>
+                  <p className="text-xs font-bold text-gray-400 uppercase">Eficiência Média</p>
+                  <p className="text-2xl font-black text-blue-600">98%</p>
+              </div>
+              <div className="p-2 bg-gray-50 rounded-lg text-gray-400"><TrendingUp /></div>
+          </div>
+      </div>
+
+      {/* DAYS SELECTOR */}
+      <div className="w-full">
+        <div className="flex gap-4 overflow-x-auto pb-6 pt-2 px-2 snap-x hide-scrollbar w-full">
             {DAYS_OF_WEEK.map((day, idx) => {
                 const isSelected = activeDayIndex === idx;
                 return (
-                    <div key={day} onClick={() => setActiveDayIndex(idx)} className={`flex-shrink-0 snap-start min-w-[180px] cursor-pointer p-4 rounded-2xl border transition-all duration-300 relative overflow-hidden group ${isSelected ? 'bg-white border-dhl-red ring-4 ring-dhl-red/10 shadow-xl scale-105 z-10' : 'bg-white border-gray-100 hover:border-dhl-yellow/50 hover:shadow-md opacity-80 hover:opacity-100'}`}>
+                    <div 
+                        key={day} 
+                        onClick={() => setActiveDayIndex(idx)} 
+                        className={`
+                            flex-shrink-0 snap-start w-[180px] cursor-pointer p-4 rounded-2xl border transition-all duration-300 relative overflow-hidden group 
+                            ${isSelected ? 'bg-white border-dhl-red ring-4 ring-dhl-red/10 shadow-xl scale-105 z-10' : 'bg-white border-gray-200 hover:border-dhl-yellow/50 hover:shadow-md'}
+                        `}
+                    >
                         {isSelected && <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-dhl-red to-dhl-yellow"></div>}
                         <div className="flex justify-between items-center mb-3">
                             <span className={`font-bold text-sm ${isSelected ? 'text-gray-800' : 'text-gray-400'}`}>{day}</span>
@@ -353,6 +434,7 @@ export function Scheduler() {
       </div>
 
       <div className="bg-white border border-gray-200 rounded-2xl shadow-xl overflow-hidden">
+        {/* SHIFT & EFFICIENCY CONFIG */}
         <div className="p-6 border-b border-gray-100 bg-gray-50/50 grid grid-cols-1 lg:grid-cols-12 gap-6 items-end">
             <div className="lg:col-span-2">
                 <label className="text-xs font-bold text-gray-500 uppercase mb-2 flex items-center gap-2"><Clock size={14} /> Início do Turno</label>
@@ -382,6 +464,7 @@ export function Scheduler() {
                 const settings = currentDayData.parentSettings[Number(proc.id)] || { split: 100 };
                 return (
                     <div key={proc.id} className="group hover:bg-gray-50/30 transition-colors">
+                        {/* Process Header */}
                         <div className="px-6 py-4 flex items-center justify-between">
                             <div className="flex items-center gap-4">
                                 <div className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-sm ${proc.type === 'Inbound' ? 'bg-emerald-100 text-emerald-600' : 'bg-blue-100 text-blue-600'}`}>
@@ -399,19 +482,10 @@ export function Scheduler() {
                                     </div>
                                 </div>
                             </div>
-                            <div className="flex items-center gap-4">
-                                <div className="text-right">
-                                    <div className="text-[10px] font-bold text-gray-400 uppercase">Input Total</div>
-                                    <div className="text-sm font-bold text-gray-800">{Math.round(data.reduce((a, b) => a + b.input, 0) || 0).toLocaleString()}</div>
-                                </div>
-                                <div className="text-right">
-                                    <div className="text-[10px] font-bold text-gray-400 uppercase">Output Total</div>
-                                    <div className="text-sm font-bold text-emerald-600">{Math.round(data.reduce((a, b) => a + b.output, 0) || 0).toLocaleString()}</div>
-                                </div>
-                                <div draggable onDragStart={() => handleDragStart(processOrder.indexOf(proc))} onDragOver={(e) => e.preventDefault()} onDrop={() => handleDrop(processOrder.indexOf(proc))} className="cursor-grab text-gray-300 hover:text-gray-500 p-2"><GripVertical size={20} /></div>
-                            </div>
+                            <div draggable onDragStart={() => handleDragStart(processOrder.indexOf(proc))} onDragOver={(e) => e.preventDefault()} onDrop={() => handleDrop(processOrder.indexOf(proc))} className="cursor-grab text-gray-300 hover:text-gray-500 p-2"><GripVertical size={20} /></div>
                         </div>
 
+                        {/* Data Grid */}
                         <div className="overflow-x-auto pb-4 px-6">
                             <div className="inline-block min-w-full align-middle">
                                 <div className="border border-gray-200 rounded-xl overflow-hidden">
