@@ -3,7 +3,8 @@ import { api } from '../Services/api';
 import { 
   Users, Clock, ArrowDownCircle, ArrowUpCircle, 
   Save, RefreshCw, FileSpreadsheet, Box, ShieldAlert, Percent,
-  CornerDownRight, Download, PieChart, Zap, TrendingUp
+  CornerDownRight, Download, PieChart, Zap, TrendingUp, 
+  CloudDownload, CalendarRange 
 } from 'lucide-react';
 
 // --- INTERFACES ---
@@ -26,36 +27,48 @@ interface PlanRow {
   uniqueKey: string;
   type: 'Process' | 'Subprocess';
   parentId?: number;
-  
   id: number;
   name: string;
   operationType: 'Inbound' | 'Outbound';
   meta: number;
-  
   splitPercentage: number;
   volumeCalculated: number;
-  
   hours: number;
   hcBase: number;
   hcFinal: number;
 }
 
+// Interface para a resposta da API de Forecast
+interface MonthlyForecastItem {
+  date: string;
+  inboundM03: number;
+  outboundM03: number;
+}
+
+interface ForecastResponse {
+  data: MonthlyForecastItem[];
+}
+
 export function Planning() {
   const [processes, setProcesses] = useState<Process[]>([]);
   const [loading, setLoading] = useState(false);
+  const [importing, setImporting] = useState(false);
   
+  // --- CONFIGURAÇÕES DE DATA (AGORA É INTERVALO) ---
+  const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
+  const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]);
+
   // --- CONFIGURAÇÕES GERAIS ---
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [workingHours, setWorkingHours] = useState(7.33); 
   const [absFactor, setAbsFactor] = useState(0); 
 
-  // --- VOLUMES TOTAIS (DIA) ---
+  // --- VOLUMES TOTAIS (MÉDIA DO PERÍODO) ---
   const [volInbound, setVolInbound] = useState<number>(0);
   const [volOutbound, setVolOutbound] = useState<number>(0);
 
-  // --- CONTROLE DE TURNOS (NOVO) ---
-  const [shiftDist, setShiftDist] = useState({ s1: 40, s2: 40, s3: 20 }); // Padrão: 40/40/20
-  const [viewMode, setViewMode] = useState<'Full' | '1' | '2' | '3'>('Full'); // O que estamos vendo agora?
+  // --- CONTROLE DE TURNOS ---
+  const [shiftDist, setShiftDist] = useState({ s1: 40, s2: 40, s3: 20 }); 
+  const [viewMode, setViewMode] = useState<'Full' | '1' | '2' | '3'>('Full');
 
   // --- CONTROLE DE PORCENTAGEM DE PROCESSO ---
   const [splits, setSplits] = useState<Record<string, number>>({});
@@ -86,24 +99,106 @@ export function Planning() {
     }
   }
 
+  // --- IMPORTAR FORECAST (LÓGICA ROBUSTA INTEIRO x INTEIRO) ---
+  async function handleImportForecast() {
+    if (!startDate || !endDate) {
+        alert("Selecione a data inicial e final.");
+        return;
+    }
+    if (startDate > endDate) {
+        alert("A data inicial não pode ser maior que a final.");
+        return;
+    }
+
+    setImporting(true);
+    try {
+        let allData: MonthlyForecastItem[] = [];
+
+        // 1. Extrai Ano e Mês diretamente das strings (Evita bugs de Fuso Horário)
+        const [startY, startM] = startDate.split('-').map(Number);
+        const [endY, endM] = endDate.split('-').map(Number);
+
+        // 2. Loop Robusto: Itera ano/mês matematicamente
+        let curY = startY;
+        let curM = startM;
+
+        // Enquanto o ano for menor, OU (ano igual E mês menor ou igual)
+        while (curY < endY || (curY === endY && curM <= endM)) {
+            try {
+                // Chama a API para o mês da iteração
+                const response = await api.get<ForecastResponse>('/forecast/monthly', {
+                    params: { year: curY, month: curM }
+                });
+                
+                if (response.data && response.data.data) {
+                    allData = [...allData, ...response.data.data];
+                }
+            } catch (err) {
+                console.warn(`Sem dados para ${curM}/${curY} (pode ser normal se a planilha acabar)`);
+            }
+
+            // Incrementa mês
+            curM++;
+            if (curM > 12) {
+                curM = 1;
+                curY++;
+            }
+        }
+
+        // 3. Filtra apenas os dias dentro do range exato
+        // A API retorna "2026-01-01T00:00:00", o split('T')[0] pega só "2026-01-01"
+        const daysInRange = allData.filter(item => {
+            const itemDate = item.date.split('T')[0];
+            return itemDate >= startDate && itemDate <= endDate;
+        });
+
+        if (daysInRange.length > 0) {
+            // Calcula Soma
+            const sumIn = daysInRange.reduce((acc, item) => acc + item.inboundM03, 0);
+            const sumOut = daysInRange.reduce((acc, item) => acc + item.outboundM03, 0);
+
+            // Calcula Média
+            const avgIn = sumIn / daysInRange.length;
+            const avgOut = sumOut / daysInRange.length;
+
+            // Aplica multiplicador 1000 (Regra solicitada)
+            const finalIn = Math.round(avgIn * 1000);
+            const finalOut = Math.round(avgOut * 1000);
+
+            setVolInbound(finalIn);
+            setVolOutbound(finalOut);
+
+            alert(
+                `Período: ${startDate} até ${endDate}\n` +
+                `Dias encontrados: ${daysInRange.length}\n` +
+                `--------------------------------\n` +
+                `Média Inbound: ${finalIn.toLocaleString()}\n` +
+                `Média Outbound: ${finalOut.toLocaleString()}`
+            );
+        } else {
+            alert(`Nenhum dado encontrado entre ${startDate} e ${endDate}. Verifique se a planilha tem essas datas.`);
+        }
+
+    } catch (error) {
+        console.error("Erro ao importar forecast", error);
+        alert("Erro de conexão ao buscar dados.");
+    } finally {
+        setImporting(false);
+    }
+  }
+
   // --- CÁLCULO PRINCIPAL ---
   const tableRows: PlanRow[] = useMemo(() => {
     const rows: PlanRow[] = [];
-
-    // 1. Define o Multiplicador do Turno (Baseado no ViewMode)
-    let shiftMultiplier = 1; // Padrão Dia Completo (100%)
+    let shiftMultiplier = 1; 
     if (viewMode === '1') shiftMultiplier = shiftDist.s1 / 100;
     if (viewMode === '2') shiftMultiplier = shiftDist.s2 / 100;
     if (viewMode === '3') shiftMultiplier = shiftDist.s3 / 100;
 
     processes.forEach(proc => {
-      // Volume Total do Dia
       const dayVol = proc.type === 'Inbound' ? volInbound : volOutbound;
-      
-      // Volume Considerado (Aplica o Turno)
       const macroVol = dayVol * shiftMultiplier;
 
-      // --- CÁLCULO DO PAI ---
       const pKey = `p-${proc.id}`;
       const pSplit = splits[pKey] ?? 100;
       const pVol = macroVol * (pSplit / 100);
@@ -126,7 +221,6 @@ export function Planning() {
         hcFinal: pHcFinal
       });
 
-      // --- CÁLCULO DOS FILHOS ---
       const subs = proc.subprocesses || []; 
       subs.forEach(sub => {
         const sKey = `s-${sub.id}`;
@@ -162,12 +256,8 @@ export function Planning() {
     setSplits(prev => ({ ...prev, [key]: isNaN(val) ? 0 : val }));
   };
 
-  // --- FUNÇÃO DE EXPORTAÇÃO (CSV) ---
   const handleExport = () => {
-    // Cabeçalho do CSV
     const headers = ["Processo", "Tipo", "Meta UPH", "% Aplicada", "Volume Calc", "Horas", "HC Final"];
-    
-    // Linhas de dados
     const csvRows = tableRows.map(row => {
       const name = row.type === 'Subprocess' ? `  > ${row.name}` : row.name;
       return [
@@ -180,22 +270,17 @@ export function Planning() {
         row.hcFinal.toFixed(2).replace('.', ',')
       ].join(";");
     });
-
-    // Junta tudo com BOM para o Excel ler acentos
     const csvContent = "\uFEFF" + [headers.join(";"), ...csvRows].join("\n");
-    
-    // Cria o blob e baixa
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.setAttribute("href", url);
-    link.setAttribute("download", `Planejamento_${selectedDate}_${viewMode}.csv`);
+    link.setAttribute("download", `Planejamento_${startDate}_${viewMode}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   };
 
-  // --- TOTAIS ---
   const totalHC = tableRows.reduce((acc, row) => acc + row.hcFinal, 0);
   const totalInboundHC = tableRows.filter(r => r.operationType === 'Inbound').reduce((acc, row) => acc + row.hcFinal, 0);
   const totalOutboundHC = tableRows.filter(r => r.operationType === 'Outbound').reduce((acc, row) => acc + row.hcFinal, 0);
@@ -203,143 +288,18 @@ export function Planning() {
   return (
     <>
       <style>{`
-        @keyframes fadeInUp {
-          from {
-            opacity: 0;
-            transform: translateY(30px);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0);
-          }
-        }
-
-        @keyframes fadeInDown {
-          from {
-            opacity: 0;
-            transform: translateY(-20px);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0);
-          }
-        }
-
-        @keyframes shimmer {
-          0% {
-            background-position: -1000px 0;
-          }
-          100% {
-            background-position: 1000px 0;
-          }
-        }
-
-        @keyframes pulse {
-          0%, 100% {
-            opacity: 1;
-          }
-          50% {
-            opacity: 0.5;
-          }
-        }
-
-        @keyframes slideIn {
-          from {
-            opacity: 0;
-            transform: translateY(-10px);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0);
-          }
-        }
-
-        @keyframes scaleIn {
-          from {
-            opacity: 0;
-            transform: scale(0.95);
-          }
-          to {
-            opacity: 1;
-            transform: scale(1);
-          }
-        }
-
-        .animate-fade-in-up {
-          animation: fadeInUp 0.6s ease-out;
-        }
-
-        .animate-slide-in {
-          animation: slideIn 0.3s ease-out;
-        }
-
-        .animate-scale-in {
-          animation: scaleIn 0.3s ease-out;
-        }
-
-        .shimmer {
-          background: linear-gradient(
-            90deg,
-            rgba(255, 255, 255, 0) 0%,
-            rgba(255, 255, 255, 0.4) 50%,
-            rgba(255, 255, 255, 0) 100%
-          );
-          background-size: 1000px 100%;
-          animation: shimmer 2s infinite;
-        }
-
-        .card-hover {
-          transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        }
-
-        .card-hover:hover {
-          transform: translateY(-4px);
-          box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
-        }
-
-        .input-focus {
-          transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        }
-
-        .input-focus:focus {
-          transform: translateY(-2px);
-        }
-
-        .btn-hover {
-          position: relative;
-          overflow: hidden;
-          transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        }
-
-        .btn-hover::before {
-          content: '';
-          position: absolute;
-          top: 50%;
-          left: 50%;
-          width: 0;
-          height: 0;
-          border-radius: 50%;
-          background: rgba(255, 255, 255, 0.3);
-          transform: translate(-50%, -50%);
-          transition: width 0.6s, height 0.6s;
-        }
-
-        .btn-hover:hover::before {
-          width: 300px;
-          height: 300px;
-        }
-
-        .btn-hover:active {
-          transform: scale(0.95);
-        }
-
-        .table-row {
-          transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-        }
-
-        .table-row:hover {
-          background: rgba(212, 5, 17, 0.02) !important;
-        }
+        @keyframes fadeInUp { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
+        .animate-fade-in-up { animation: fadeInUp 0.6s ease-out; }
+        .shimmer { background: linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.4) 50%, rgba(255,255,255,0) 100%); background-size: 1000px 100%; animation: shimmer 2s infinite; }
+        @keyframes shimmer { 0% { background-position: -1000px 0; } 100% { background-position: 1000px 0; } }
+        .card-hover:hover { transform: translateY(-4px); box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1); }
+        .card-hover { transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+        .input-focus:focus { transform: translateY(-2px); }
+        .input-focus { transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+        .btn-hover { position: relative; overflow: hidden; transition: all 0.3s; }
+        .btn-hover:active { transform: scale(0.95); }
+        .table-row:hover { background: rgba(212, 5, 17, 0.02) !important; }
+        .table-row { transition: all 0.2s; }
       `}</style>
 
       <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-gray-50 p-8">
@@ -347,7 +307,6 @@ export function Planning() {
           
           {/* HEADER PRINCIPAL */}
           <div className="relative bg-white rounded-2xl shadow-xl border border-gray-100 overflow-hidden">
-            {/* Fundo decorativo */}
             <div className="absolute top-0 right-0 w-96 h-96 bg-gradient-to-br from-dhl-red/5 to-dhl-yellow/5 rounded-full blur-3xl"></div>
             <div className="absolute bottom-0 left-0 w-72 h-72 bg-gradient-to-tr from-dhl-yellow/5 to-dhl-red/5 rounded-full blur-3xl"></div>
             
@@ -371,51 +330,81 @@ export function Planning() {
                   </div>
                 </div>
                 
-                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
-                  {/* BOTÃO EXPORTAR */}
-                  <button 
-                    onClick={handleExport}
-                    className="btn-hover bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white px-6 py-3 rounded-xl font-bold flex items-center justify-center gap-2 shadow-lg hover:shadow-xl"
-                  >
-                    <span className="relative z-10 flex items-center gap-2">
-                      <Download size={20} /> Exportar Excel
-                    </span>
-                  </button>
+                <div className="flex flex-col xl:flex-row items-stretch gap-3">
+                  
+                  {/* BOTÕES DE AÇÃO */}
+                  <div className="flex gap-3">
+                    <button 
+                        onClick={handleImportForecast}
+                        disabled={importing}
+                        className="btn-hover bg-blue-600 hover:bg-blue-700 text-white px-4 py-3 rounded-xl font-bold flex items-center justify-center gap-2 shadow-lg hover:shadow-xl transition-all disabled:opacity-70 disabled:cursor-not-allowed flex-1 whitespace-nowrap"
+                        title="Carregar volumes da planilha do Google. Calcula a média se for um intervalo."
+                    >
+                        {importing ? <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div> : <CloudDownload size={20} />}
+                        <span className="hidden sm:inline">Importar Forecast</span>
+                    </button>
 
-                  {/* SELETOR DE DATA E VIEW MODE */}
-                  <div className="bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden">
-                    <div className="flex items-stretch divide-x divide-gray-200">
-                      <div className="p-4 bg-gradient-to-br from-gray-50 to-white">
-                        <p className="text-xs font-bold text-gray-500 uppercase mb-1">Data Referência</p>
+                    <button 
+                        onClick={handleExport}
+                        className="btn-hover bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white px-4 py-3 rounded-xl font-bold flex items-center justify-center gap-2 shadow-lg hover:shadow-xl flex-1"
+                    >
+                        <Download size={20} /> <span className="hidden sm:inline">Exportar</span>
+                    </button>
+                  </div>
+
+                  {/* SELETOR DE INTERVALO (RESPONSIVO COM WRAP) */}
+                  <div className="bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden flex flex-wrap lg:flex-nowrap">
+                      {/* DATA INICIAL */}
+                      <div className="p-3 bg-gradient-to-br from-gray-50 to-white flex flex-col justify-center border-r border-gray-200 min-w-[130px] flex-1">
+                        <div className="flex items-center gap-1 mb-1">
+                            <CalendarRange size={12} className="text-gray-400"/>
+                            <p className="text-[10px] font-bold text-gray-500 uppercase">De</p>
+                        </div>
                         <input 
                           type="date" 
-                          className="font-bold text-gray-800 bg-transparent outline-none cursor-pointer"
-                          value={selectedDate}
-                          onChange={e => setSelectedDate(e.target.value)}
+                          className="font-bold text-gray-800 bg-transparent outline-none cursor-pointer text-xs sm:text-sm w-full"
+                          value={startDate}
+                          onChange={e => setStartDate(e.target.value)}
+                        />
+                      </div>
+
+                      {/* DATA FINAL */}
+                      <div className="p-3 bg-gradient-to-br from-gray-50 to-white flex flex-col justify-center border-r border-gray-200 min-w-[130px] flex-1">
+                        <div className="flex items-center gap-1 mb-1">
+                            <CalendarRange size={12} className="text-gray-400"/>
+                            <p className="text-[10px] font-bold text-gray-500 uppercase">Até</p>
+                        </div>
+                        <input 
+                          type="date" 
+                          className="font-bold text-gray-800 bg-transparent outline-none cursor-pointer text-xs sm:text-sm w-full"
+                          value={endDate}
+                          min={startDate}
+                          onChange={e => setEndDate(e.target.value)}
                         />
                       </div>
                       
-                      <div className="p-4 bg-gradient-to-br from-gray-50 to-white">
-                        <p className="text-xs font-bold text-gray-500 uppercase mb-1">Visão</p>
+                      {/* VISÃO */}
+                      <div className="p-3 bg-gradient-to-br from-gray-50 to-white flex flex-col justify-center min-w-[130px] flex-1">
+                        <p className="text-[10px] font-bold text-gray-500 uppercase mb-1">Visão</p>
                         <select 
-                          className="bg-transparent font-bold text-gray-700 outline-none cursor-pointer"
+                          className="bg-transparent font-bold text-gray-700 outline-none cursor-pointer text-xs sm:text-sm w-full"
                           value={viewMode}
                           onChange={e => setViewMode(e.target.value as any)}
                         >
-                          <option value="Full">📊 Dia Completo</option>
-                          <option value="1">🌅 1º Turno</option>
-                          <option value="2">☀️ 2º Turno</option>
-                          <option value="3">🌙 3º Turno</option>
+                          <option value="Full">Dia Completo</option>
+                          <option value="1">1º Turno</option>
+                          <option value="2">2º Turno</option>
+                          <option value="3">3º Turno</option>
                         </select>
                       </div>
-                    </div>
                   </div>
+
                 </div>
               </div>
             </div>
           </div>
 
-          {/* PARÂMETROS MACRO */}
+          {/* PARÂMETROS MACRO (MANTEVE IGUAL) */}
           <div className="bg-white rounded-2xl shadow-xl border border-gray-100 overflow-hidden card-hover">
             <div className="bg-gradient-to-br from-dhl-yellow via-yellow-400 to-yellow-500 p-6">
               <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
@@ -442,6 +431,7 @@ export function Planning() {
                         type="number" 
                         className="w-12 px-1 py-0.5 text-center border-2 border-white/50 bg-white/10 rounded text-xs font-black text-white placeholder-white/70 outline-none focus:border-white transition-all"
                         onChange={e => setShiftDist({...shiftDist, s1: Number(e.target.value)})} 
+                        value={shiftDist.s1}
                       />
                       <span className="text-xs text-white/80">%</span>
                     </div>
@@ -451,6 +441,7 @@ export function Planning() {
                         type="number" 
                         className="w-12 px-1 py-0.5 text-center border-2 border-white/50 bg-white/10 rounded text-xs font-black text-white placeholder-white/70 outline-none focus:border-white transition-all"
                         onChange={e => setShiftDist({...shiftDist, s2: Number(e.target.value)})} 
+                        value={shiftDist.s2}
                       />
                       <span className="text-xs text-white/80">%</span>
                     </div>
@@ -460,6 +451,7 @@ export function Planning() {
                         type="number" 
                         className="w-12 px-1 py-0.5 text-center border-2 border-white/50 bg-white/10 rounded text-xs font-black text-white placeholder-white/70 outline-none focus:border-white transition-all"
                         onChange={e => setShiftDist({...shiftDist, s3: Number(e.target.value)})} 
+                        value={shiftDist.s3}
                       />
                       <span className="text-xs text-white/80">%</span>
                     </div>
@@ -474,7 +466,7 @@ export function Planning() {
                 <div className="relative bg-gradient-to-br from-green-50 to-emerald-50 p-6 rounded-xl border-2 border-green-200 overflow-hidden group">
                   <div className="absolute top-0 right-0 w-24 h-24 bg-green-200 rounded-full -mr-12 -mt-12 opacity-20 group-hover:scale-150 transition-transform duration-500"></div>
                   <label className="text-xs font-bold text-green-700 uppercase mb-3 flex items-center gap-2 relative z-10">
-                    <ArrowDownCircle size={16} /> Total Inbound (Dia)
+                    <ArrowDownCircle size={16} /> Total Inbound (Média)
                   </label>
                   <input 
                     type="number" 
@@ -489,7 +481,7 @@ export function Planning() {
                 <div className="relative bg-gradient-to-br from-blue-50 to-cyan-50 p-6 rounded-xl border-2 border-blue-200 overflow-hidden group">
                   <div className="absolute top-0 right-0 w-24 h-24 bg-blue-200 rounded-full -mr-12 -mt-12 opacity-20 group-hover:scale-150 transition-transform duration-500"></div>
                   <label className="text-xs font-bold text-blue-700 uppercase mb-3 flex items-center gap-2 relative z-10">
-                    <ArrowUpCircle size={16} /> Total Outbound (Dia)
+                    <ArrowUpCircle size={16} /> Total Outbound (Média)
                   </label>
                   <input 
                     type="number" 
@@ -535,7 +527,7 @@ export function Planning() {
             </div>
           </div>
 
-          {/* CARDS DE RESULTADO */}
+          {/* CARDS DE RESULTADO E TABELA (MANTIDOS) */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <ResultCard 
               title="Headcount Necessário" 
