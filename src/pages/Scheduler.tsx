@@ -54,7 +54,8 @@ interface DayScenario {
 const DAYS_OF_WEEK = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"];
 const DEFAULT_ORDER = ["Recebimento", "PutWay", "Picking", "Sorting Aut", "Sorting Manual", "Packing", "Handover Last Mile"];
 const LOW_EFFICIENCY_HOURS = [0, 1, 11, 12, 18, 19];
-const LOCAL_STORAGE_KEY = 'labor_control_week_cache_v9_branch_merge'; 
+// ATUALIZADO: Cache Key V10 para forçar reset da lógica antiga
+const LOCAL_STORAGE_KEY = 'labor_control_week_cache_v10_strategic_view'; 
 
 export function Scheduler() {
   const [loading, setLoading] = useState(false);
@@ -188,10 +189,14 @@ export function Scheduler() {
     const sortingIds: number[] = [];
     processOrder.forEach(p => {
         const name = p.name.toLowerCase();
-        outputsByProcess[p.id] = weekData.map(() => Array(24).fill(0)); // Inicializa
+        outputsByProcess[p.id] = weekData.map(() => Array(24).fill(0)); 
         if (name.includes('picking') || name.includes('separação')) pickingId = p.id;
         if (name.includes('sort') || name.includes('classificação')) sortingIds.push(p.id);
     });
+
+    // MAPA DE BACKLOGS PERSISTENTES (Visualização correta da herança entre dias)
+    let runningBacklogs: Record<number, number> = {};
+    processOrder.forEach(p => runningBacklogs[p.id] = 0);
 
     weekData.forEach((dayData, dayIdx) => {
        const dayResults: Record<number, SimulationCell[]> = {};
@@ -199,36 +204,31 @@ export function Scheduler() {
        daysHours[dayIdx] = hoursArray;
        const hourlyTotalHc = new Array(24).fill(0); 
        
-       let carryOverBacklogs: Record<number, number> = {};
-
        processOrder.forEach((proc, idx) => {
           const procCells: SimulationCell[] = [];
           const procName = proc.name.toLowerCase();
-          const isReceiving = idx === 0; // Assume primeiro como Inbound
+          const isReceiving = idx === 0; 
           const isSorting = sortingIds.includes(proc.id);
           const isPacking = procName.includes('packing') || procName.includes('embalagem');
 
-          let currentBacklog = carryOverBacklogs[proc.id] || 0;
+          // Recupera o backlog acumulado até o final do dia anterior
+          let currentBacklog = runningBacklogs[proc.id];
+
           const settings = dayData.parentSettings[Number(proc.id)] || { split: 100 };
           const splitRatio = settings.split / 100;
 
           hoursArray.forEach((hour, hIdx) => {
-             // LÓGICA DE INPUT (Branch & Merge)
+             // Branch & Merge Logic (Visualização)
              let input = 0;
              if (isReceiving) {
                  input = dayData.volume / 24;
              } else if (isSorting && pickingId) {
-                 // Sorting vem do Picking com Split
                  input = outputsByProcess[pickingId][dayIdx][hour] * splitRatio;
              } else if (isPacking) {
-                 // Packing vem da SOMA dos Sortings
                  let totalSort = 0;
-                 sortingIds.forEach(sid => {
-                     totalSort += outputsByProcess[sid][dayIdx][hour];
-                 });
+                 sortingIds.forEach(sid => totalSort += outputsByProcess[sid][dayIdx][hour]);
                  input = totalSort;
              } else {
-                 // Fluxo linear padrão
                  const prevId = processOrder[idx - 1].id;
                  input = outputsByProcess[prevId][dayIdx][hour] * splitRatio;
              }
@@ -249,15 +249,16 @@ export function Scheduler() {
              const output = Math.min(totalAvailable, capacity);
              const newBacklog = totalAvailable - output;
              
-             // Salva output para o próximo processo usar
              outputsByProcess[proc.id][dayIdx][hour] = output;
-             
              currentBacklog = newBacklog;
 
              procCells.push({ hour, input, efficiency: efficiency * 100, totalHc: directHc + indirectHc, directHc, indirectHc, capacity, output, backlog: newBacklog });
           });
+          
+          // Atualiza o backlog global do processo para o início do próximo dia
+          runningBacklogs[proc.id] = currentBacklog;
+          
           dayResults[proc.id] = procCells;
-          carryOverBacklogs[proc.id] = currentBacklog;
        });
        fullWeekResults[dayIdx] = dayResults;
        daysPeakHc[dayIdx] = Math.max(...hourlyTotalHc);
@@ -266,7 +267,7 @@ export function Scheduler() {
   }, [weekData, processOrder]);
 
   const handleSmartDistributeWeek = () => {
-    if (!confirm("A IA irá calcular o HC. Regra: Teto de backlog de 85k no Picking. HC fixo em refeições. Continuar?")) return;
+    if (!confirm("A IA irá calcular o plano Estratégico Semanal (Média Ponderada + Tetos de Backlog). Continuar?")) return;
     const aiProcessInput = processOrder.map(p => ({
       id: Number(p.id), name: p.name, type: p.type, standardProductivity: p.standardProductivity,
       subprocesses: p.subprocesses ? p.subprocesses.map(s => ({ id: s.id, standardProductivity: s.standardProductivity })) : []
@@ -326,7 +327,7 @@ export function Scheduler() {
                     WFM <span className="text-dhl-red">Planner</span>
                 </h1>
                 <p className="text-gray-500 font-medium mt-1">
-                    Simulador Inteligente. Flow Control (Branch & Merge).
+                    Simulador Inteligente. Estratégia Semanal & Balanceamento de Fluxo.
                 </p>
             </div>
 
@@ -336,10 +337,10 @@ export function Scheduler() {
                 </div>
                 <div>
                     <div className="text-[10px] font-bold text-purple-300 uppercase tracking-widest flex items-center gap-1">
-                        <Sparkles size={10} /> AI V9.0
+                        <Sparkles size={10} /> Strategic AI V10
                     </div>
                     <div className="text-sm font-bold text-gray-200">
-                        Topologia de Fluxo Ativa
+                        Otimização Semanal Ativa
                     </div>
                 </div>
             </div>
