@@ -156,7 +156,7 @@ export function Sidebar() {
               <NavItem 
                 to="/scheduler" 
                 icon={<CalendarClock size={20} />} 
-                label="Simulador Semanal" 
+                label="Simulador Semanal M03" 
                 active={isActive('/scheduler')}
                 index={2}
               />

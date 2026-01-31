@@ -1,12 +1,12 @@
 import { BrowserRouter as Router, Routes, Route, Outlet, Navigate } from 'react-router-dom';
 
 // --- COMPONENTES DE ESTRUTURA ---
-import { Sidebar } from './components/SideBar';
+import { Sidebar } from './components/Sidebar';
 
 // --- IMPORTAÇÃO DAS PÁGINAS ---
 import { Login } from './pages/Login'; // <--- Nova importação
 import { Dashboard } from './pages/Dashboard';
-import { Scheduler } from './pages/Scheduler';
+import { SchedulerM03 } from './pages/SchedulerM03';
 import { Planning } from './pages/Planning';
 import { RegisterUser } from './pages/RegisterUser';
 import { RegisterProcess } from './pages/RegisterProcess';
@@ -50,7 +50,7 @@ export function App() {
         {/* ROTAS PROTEGIDAS (Com Sidebar) */}
         <Route element={<PrivateLayout />}>
           <Route path="/" element={<Dashboard />} />
-          <Route path="/scheduler" element={<Scheduler />} />
+          <Route path="/scheduler" element={<SchedulerM03 />} />
           <Route path="/planning" element={<Planning />} />
           <Route path="/processes" element={<RegisterProcess />} />
           <Route path="/register" element={<RegisterUser />} />
