@@ -2,15 +2,17 @@ import { useState, useEffect } from 'react';
 import { api } from '../Services/api';
 import { 
   Package, Plus, Trash2, ChevronDown, ChevronUp, 
-  Layers, ArrowDownCircle, ArrowUpCircle, Save, AlertTriangle, Loader2, 
-  Edit, X, Check, Zap, Warehouse 
+  Layers, ArrowDownCircle, ArrowUpCircle, Save, Loader2, 
+  Edit, X, Check, Zap, Warehouse, Clock, Activity
 } from 'lucide-react';
 
-// --- INTERFACES ---
+// --- INTERFACES (SEM FADIGA) ---
 interface Subprocess {
   id: number;
   name: string;
   standardProductivity: number;
+  efficiency: number; 
+  travelTime: number; 
   processId: number;
 }
 
@@ -18,12 +20,13 @@ interface Process {
   id: number;
   name: string;
   type: 'Inbound' | 'Outbound';
-  warehouse?: string; // NOVO CAMPO
+  warehouse?: string;
   standardProductivity: number;
+  efficiency: number; 
+  travelTime: number; 
   subprocesses: Subprocess[];
 }
 
-// Função auxiliar para evitar erros de case sensitive no backend
 const getSubprocesses = (p: any) => {
   return p.subprocesses || p.Subprocesses || [];
 };
@@ -39,13 +42,17 @@ export function RegisterProcess() {
   const [newProcess, setNewProcess] = useState({
     name: '',
     type: 'Inbound', 
-    warehouse: 'M03', // Padrão M03
-    standardProductivity: 0
+    warehouse: 'M03', 
+    standardProductivity: 0,
+    efficiency: 100, // Visualmente 0-100
+    travelTime: 0
   });
 
   const [newSubprocess, setNewSubprocess] = useState({
     name: '',
-    standardProductivity: 0
+    standardProductivity: 0,
+    efficiency: 100,
+    travelTime: 0
   });
 
   // --- ESTADOS DE EDIÇÃO ---
@@ -73,10 +80,15 @@ export function RegisterProcess() {
     e.preventDefault();
     setLoading(true);
     try {
-      const payload = { ...newProcess, area: '-' };
+      const payload = { 
+          ...newProcess, 
+          area: '-',
+          // Converte 100 (visual) para 1.0 (banco)
+          efficiency: Number(newProcess.efficiency) / 100, 
+      };
       await api.post('/processes', payload);
       await loadProcesses();
-      setNewProcess({ name: '', type: 'Inbound', warehouse: 'M03', standardProductivity: 0 }); 
+      setNewProcess({ name: '', type: 'Inbound', warehouse: 'M03', standardProductivity: 0, efficiency: 100, travelTime: 0 }); 
       alert("Processo criado com sucesso!");
     } catch (error) {
       alert('Erro ao criar processo.');
@@ -90,12 +102,17 @@ export function RegisterProcess() {
     if (!editingProcess) return;
 
     try {
+      // CORREÇÃO DO BUG 100%: 
+      // O estado editingProcess.efficiency já está em decimal (0.9, 1.0) pois tratamos no onChange.
+      // Então enviamos direto, sem dividir novamente.
       const payload = {
         name: editingProcess.name,
         area: '-',
         type: editingProcess.type,
-        warehouse: editingProcess.warehouse, // Envia Warehouse na atualização
-        standardProductivity: Number(editingProcess.standardProductivity)
+        warehouse: editingProcess.warehouse,
+        standardProductivity: Number(editingProcess.standardProductivity),
+        efficiency: Number(editingProcess.efficiency), // Envia direto (já é decimal)
+        travelTime: Number(editingProcess.travelTime)
       };
 
       await api.put(`/processes/${editingProcess.id}`, payload);
@@ -121,23 +138,18 @@ export function RegisterProcess() {
   // ==================================================================================
 
   async function handleCreateSubprocess(processId: number) {
-    if (!newSubprocess.name) {
-      alert("Digite o nome do subprocesso.");
-      return;
-    }
-    if (Number(newSubprocess.standardProductivity) <= 0) {
-      alert("A meta (UPH) deve ser maior que zero.");
-      return;
-    }
-
+    if (!newSubprocess.name) return alert("Digite o nome do subprocesso.");
+    
     setSubLoading(true);
     try {
       const payload = {
         name: newSubprocess.name,
-        standardProductivity: Number(newSubprocess.standardProductivity)
+        standardProductivity: Number(newSubprocess.standardProductivity),
+        efficiency: Number(newSubprocess.efficiency) / 100, // Converte visual para decimal
+        travelTime: Number(newSubprocess.travelTime)
       };
       await api.post(`/processes/${processId}/subprocesses`, payload);
-      setNewSubprocess({ name: '', standardProductivity: 0 }); 
+      setNewSubprocess({ name: '', standardProductivity: 0, efficiency: 100, travelTime: 0 }); 
       await loadProcesses();
     } catch (error: any) {
       alert('Erro ao adicionar subprocesso.');
@@ -152,7 +164,9 @@ export function RegisterProcess() {
     try {
       const payload = {
         name: editingSubprocess.name,
-        standardProductivity: Number(editingSubprocess.standardProductivity)
+        standardProductivity: Number(editingSubprocess.standardProductivity),
+        efficiency: Number(editingSubprocess.efficiency), // Já está decimal no estado
+        travelTime: Number(editingSubprocess.travelTime)
       };
 
       await api.put(`/processes/subprocesses/${editingSubprocess.id}`, payload);
@@ -176,136 +190,130 @@ export function RegisterProcess() {
   return (
     <>
       <style>{`
-        @keyframes fadeInUp { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
-        .animate-fade-in-up { animation: fadeInUp 0.6s ease-out; }
-        .input-focus:focus { transform: translateY(-2px); }
+        @keyframes fadeInUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+        .animate-fade-in-up { animation: fadeInUp 0.5s ease-out forwards; }
+        
+        .input-focus:focus { transform: translateY(-2px); box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06); }
         .input-focus { transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+        
         .card-hover:hover { transform: translateY(-4px); box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1); }
         .card-hover { transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
-        .shimmer { background: linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.4) 50%, rgba(255,255,255,0) 100%); background-size: 1000px 100%; animation: shimmer 2s infinite; }
-        @keyframes shimmer { 0% { background-position: -1000px 0; } 100% { background-position: 1000px 0; } }
+        
+        .btn-hover { position: relative; overflow: hidden; transition: all 0.3s; }
+        .btn-hover:active { transform: scale(0.95); }
       `}</style>
 
       <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-gray-50 p-8">
-        <div className="max-w-7xl mx-auto space-y-8 animate-fade-in-up pb-10">
+        <div className="max-w-7xl mx-auto space-y-8 pb-10">
           
           {/* HEADER PRINCIPAL */}
-          <div className="relative bg-white rounded-2xl shadow-xl border border-gray-100 overflow-hidden">
-            <div className="absolute top-0 right-0 w-96 h-96 bg-gradient-to-br from-dhl-red/5 to-dhl-yellow/5 rounded-full blur-3xl"></div>
-            <div className="absolute bottom-0 left-0 w-72 h-72 bg-gradient-to-tr from-dhl-yellow/5 to-dhl-red/5 rounded-full blur-3xl"></div>
+          <div className="relative bg-white rounded-3xl shadow-xl border border-gray-100 overflow-hidden animate-fade-in-up">
+            <div className="absolute top-0 right-0 w-96 h-96 bg-gradient-to-br from-dhl-red/5 to-dhl-yellow/5 rounded-full blur-3xl -mr-20 -mt-20"></div>
             
-            <div className="relative p-8">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-5">
-                  <div className="relative">
-                    <div className="absolute inset-0 bg-gradient-to-br from-dhl-red to-red-600 rounded-2xl blur opacity-50"></div>
-                    <div className="relative w-16 h-16 bg-gradient-to-br from-dhl-red to-red-600 rounded-2xl flex items-center justify-center shadow-lg transform hover:scale-110 transition-transform duration-300">
-                      <Package className="text-white" size={32} />
-                    </div>
-                  </div>
-                  <div>
-                    <h1 className="text-4xl font-bold bg-gradient-to-r from-gray-900 to-gray-700 bg-clip-text text-transparent">
-                      Cadastro Operacional
-                    </h1>
-                    <p className="text-gray-500 mt-1 flex items-center gap-2">
-                      <Zap size={14} className="text-dhl-yellow" />
-                      <span>Gerencie processos macro e subprocessos</span>
-                    </p>
-                  </div>
+            <div className="relative p-8 flex items-center justify-between">
+              <div className="flex items-center gap-6">
+                <div className="w-20 h-20 bg-gradient-to-br from-dhl-red to-red-700 rounded-2xl flex items-center justify-center shadow-2xl transform -rotate-3 hover:rotate-0 transition-all duration-300">
+                  <Package className="text-white" size={40} />
                 </div>
-                
-                <div className="hidden md:block">
-                  <div className="relative bg-gradient-to-br from-dhl-red to-red-600 rounded-2xl p-6 shadow-xl">
-                    <div className="absolute inset-0 shimmer rounded-2xl"></div>
-                    <div className="relative text-center">
-                      <p className="text-white/80 text-sm font-medium mb-1">Total de Processos</p>
-                      <p className="text-white text-4xl font-bold">{processes.length}</p>
-                    </div>
-                  </div>
+                <div>
+                  <h1 className="text-4xl font-black text-gray-900 tracking-tight">
+                    Cadastro Operacional
+                  </h1>
+                  <p className="text-gray-500 mt-1 flex items-center gap-2 font-medium">
+                    <Zap size={16} className="text-dhl-yellow fill-dhl-yellow" />
+                    Gestão de processos e produtividade
+                  </p>
                 </div>
               </div>
             </div>
           </div>
 
           {/* FORMULÁRIO DE CRIAÇÃO */}
-          <div className="bg-white rounded-2xl shadow-xl border border-gray-100 overflow-hidden card-hover">
-            <div className="bg-gradient-to-br from-dhl-yellow via-yellow-400 to-yellow-500 p-6">
+          <div className="bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden card-hover animate-fade-in-up" style={{ animationDelay: '0.1s' }}>
+            <div className="bg-gradient-to-r from-gray-50 to-white p-6 border-b border-gray-100">
               <div className="flex items-center gap-3">
-                <div className="w-12 h-12 bg-white/20 backdrop-blur-sm rounded-xl flex items-center justify-center shadow-lg">
-                  <Plus className="text-white" size={22} />
+                <div className="w-10 h-10 bg-dhl-yellow rounded-xl flex items-center justify-center shadow-lg shadow-yellow-200">
+                  <Plus className="text-white" size={24} />
                 </div>
-                <div>
-                  <h2 className="font-bold text-2xl text-white drop-shadow-lg">Novo Processo Principal</h2>
-                  <p className="text-white/90 text-sm mt-0.5">Cadastre um novo processo macro</p>
-                </div>
+                <h2 className="font-bold text-xl text-gray-800">Novo Processo Principal</h2>
               </div>
             </div>
             
-            <form onSubmit={handleCreateProcess} className="p-6">
-              <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-                {/* Nome */}
+            <form onSubmit={handleCreateProcess} className="p-8">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                
+                {/* LINHA 1 */}
                 <div className="md:col-span-2">
-                  <label className="block text-sm font-bold text-gray-700 mb-2">Nome do Processo</label>
+                  <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5 ml-1">Nome do Processo</label>
                   <input 
                     type="text" 
                     placeholder="Ex: Recebimento"
-                    className="input-focus w-full px-4 py-3 border-2 border-gray-200 rounded-xl outline-none bg-gray-50 font-medium transition-all duration-300 hover:border-gray-300 focus:bg-white focus:border-dhl-yellow focus:ring-4 focus:ring-dhl-yellow/20"
+                    className="input-focus w-full px-4 py-3.5 border border-gray-200 rounded-xl outline-none bg-gray-50/50 font-bold text-gray-700 focus:bg-white focus:border-dhl-yellow"
                     value={newProcess.name}
                     onChange={e => setNewProcess({...newProcess, name: e.target.value})}
                     required
                   />
                 </div>
-                
-                {/* Tipo */}
                 <div className="md:col-span-1">
-                  <label className="block text-sm font-bold text-gray-700 mb-2">Tipo</label>
+                  <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5 ml-1">Tipo</label>
                   <select 
-                    className="input-focus w-full px-4 py-3 border-2 border-gray-200 rounded-xl outline-none bg-gray-50 font-medium transition-all duration-300 hover:border-gray-300 focus:bg-white focus:border-dhl-yellow focus:ring-4 focus:ring-dhl-yellow/20 appearance-none cursor-pointer"
+                    className="input-focus w-full px-4 py-3.5 border border-gray-200 rounded-xl outline-none bg-gray-50/50 font-bold text-gray-700 cursor-pointer"
                     value={newProcess.type}
                     onChange={e => setNewProcess({...newProcess, type: e.target.value as 'Inbound' | 'Outbound'})}
-                    required
                   >
-                    <option value="Inbound">📥 Inbound (Entrada)</option>
-                    <option value="Outbound">📤 Outbound (Saída)</option>
+                    <option value="Inbound">📥 Inbound</option>
+                    <option value="Outbound">📤 Outbound</option>
                   </select>
                 </div>
-
-                {/* Warehouse (NOVO) */}
                 <div className="md:col-span-1">
-                  <label className="block text-sm font-bold text-gray-700 mb-2">Warehouse</label>
+                  <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5 ml-1">Warehouse</label>
                   <select 
-                    className="input-focus w-full px-4 py-3 border-2 border-gray-200 rounded-xl outline-none bg-gray-50 font-medium transition-all duration-300 hover:border-gray-300 focus:bg-white focus:border-dhl-yellow focus:ring-4 focus:ring-dhl-yellow/20 appearance-none cursor-pointer"
+                    className="input-focus w-full px-4 py-3.5 border border-gray-200 rounded-xl outline-none bg-gray-50/50 font-bold text-gray-700 cursor-pointer"
                     value={newProcess.warehouse}
                     onChange={e => setNewProcess({...newProcess, warehouse: e.target.value})}
-                    required
                   >
                     <option value="M03">M03</option>
                     <option value="RC">RC</option>
                   </select>
                 </div>
-                
-                {/* UPH */}
+
+                {/* LINHA 2 */}
                 <div className="md:col-span-1">
-                  <label className="block text-sm font-bold text-gray-700 mb-2">Produtividade (UPH)</label>
+                  <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5 ml-1 flex items-center gap-1"><Zap size={12}/> Meta (UPH)</label>
                   <input 
                     type="number" 
-                    min="1"
-                    placeholder="Ex: 100"
-                    className="input-focus w-full px-4 py-3 border-2 border-gray-200 rounded-xl outline-none bg-gray-50 font-medium transition-all duration-300 hover:border-gray-300 focus:bg-white focus:border-dhl-yellow focus:ring-4 focus:ring-dhl-yellow/20"
+                    className="input-focus w-full px-4 py-3 border border-gray-200 rounded-xl outline-none text-center font-black text-gray-800"
                     value={newProcess.standardProductivity}
                     onChange={e => setNewProcess({...newProcess, standardProductivity: Number(e.target.value)})}
-                    required
+                  />
+                </div>
+                <div className="md:col-span-1">
+                  <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5 ml-1 flex items-center gap-1"><Activity size={12}/> Eficiência (%)</label>
+                  <input 
+                    type="number" 
+                    className="input-focus w-full px-4 py-3 border border-gray-200 rounded-xl outline-none text-center font-black text-blue-600"
+                    value={newProcess.efficiency}
+                    onChange={e => setNewProcess({...newProcess, efficiency: Number(e.target.value)})}
+                  />
+                </div>
+                <div className="md:col-span-1">
+                  <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5 ml-1 flex items-center gap-1"><Clock size={12}/> Desloc. (min)</label>
+                  <input 
+                    type="number" 
+                    className="input-focus w-full px-4 py-3 border border-gray-200 rounded-xl outline-none text-center font-black text-orange-600"
+                    value={newProcess.travelTime}
+                    onChange={e => setNewProcess({...newProcess, travelTime: Number(e.target.value)})}
                   />
                 </div>
                 
-                <div className="md:col-span-5 flex justify-end mt-2">
+                <div className="md:col-span-1 flex items-end">
                   <button 
                     type="submit" 
                     disabled={loading}
-                    className="btn-hover bg-gradient-to-r from-dhl-yellow to-yellow-500 text-gray-900 font-bold px-8 py-3 rounded-xl hover:from-yellow-500 hover:to-yellow-600 transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="btn-hover w-full bg-gradient-to-r from-dhl-yellow to-yellow-500 text-gray-900 font-bold px-6 py-3.5 rounded-xl hover:shadow-lg flex items-center justify-center gap-2 disabled:opacity-50"
                   >
                     {loading ? <Loader2 className="animate-spin" size={20} /> : <Save size={20} />}
-                    {loading ? 'Salvando...' : 'Cadastrar Processo'}
+                    Cadastrar
                   </button>
                 </div>
               </div>
@@ -313,258 +321,195 @@ export function RegisterProcess() {
           </div>
 
           {/* LISTAGEM DE PROCESSOS */}
-          <div className="space-y-4">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="font-bold text-2xl text-gray-900">Processos Cadastrados</h3>
-              <div className="flex items-center gap-2 bg-white px-4 py-2 rounded-xl shadow-sm border border-gray-200">
-                <div className="w-2.5 h-2.5 bg-green-500 rounded-full animate-pulse"></div>
-                <span className="text-sm font-bold text-gray-700">{processes.length} processo{processes.length !== 1 ? 's' : ''}</span>
-              </div>
-            </div>
+          <div className="space-y-6">
+            <h3 className="font-bold text-2xl text-gray-900 px-2 border-l-4 border-dhl-red">Processos Ativos</h3>
             
             {processes.map((process, index) => (
               <div 
                 key={process.id} 
-                className="bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden animate-fade-in-up"
-                style={{ animationDelay: `${index * 0.1}s` }}
+                className="bg-white rounded-2xl shadow-md border border-gray-100 overflow-hidden hover:shadow-2xl hover:-translate-y-1 transition-all duration-300 animate-fade-in-up"
+                style={{ animationDelay: `${0.2 + (index * 0.1)}s` }}
               >
                 
                 {/* CABEÇALHO DO CARD */}
                 <div 
-                  className="p-6 flex items-center justify-between cursor-pointer bg-gradient-to-r from-white to-gray-50 hover:from-gray-50 hover:to-gray-100 transition-all duration-300"
+                  className="p-6 flex flex-col md:flex-row items-center justify-between cursor-pointer group"
                   onClick={() => setExpandedProcessId(expandedProcessId === process.id ? null : process.id)}
                 >
-                  <div className="flex items-center gap-5">
-                    <div className={`relative p-3 rounded-2xl shadow-lg transform hover:scale-110 transition-transform duration-300 ${
-                      process.type === 'Inbound' 
-                        ? 'bg-gradient-to-br from-green-500 to-emerald-600' 
-                        : 'bg-gradient-to-br from-blue-500 to-blue-600'
-                    }`}>
-                      <div className="absolute inset-0 shimmer rounded-2xl"></div>
-                      {process.type === 'Inbound' 
-                        ? <ArrowDownCircle className="text-white relative z-10" size={28} /> 
-                        : <ArrowUpCircle className="text-white relative z-10" size={28} />
-                      }
+                  <div className="flex items-center gap-6 w-full">
+                    <div className={`w-16 h-16 rounded-2xl flex items-center justify-center shadow-lg transition-transform duration-300 group-hover:scale-110 ${process.type === 'Inbound' ? 'bg-gradient-to-br from-green-500 to-emerald-600' : 'bg-gradient-to-br from-blue-500 to-blue-600'}`}>
+                      {process.type === 'Inbound' ? <ArrowDownCircle className="text-white" size={32} /> : <ArrowUpCircle className="text-white" size={32} />}
                     </div>
                     
-                    <div>
-                      <h4 className="font-bold text-xl text-gray-900 mb-1">{process.name}</h4>
-                      <div className="flex items-center gap-3 text-sm flex-wrap">
-                        <span className={`px-3 py-1 rounded-lg text-xs font-bold shadow-sm ${
-                          process.type === 'Inbound' 
-                            ? 'bg-green-100 text-green-700 border border-green-200' 
-                            : 'bg-blue-100 text-blue-700 border border-blue-200'
-                        }`}>
-                          {process.type === 'Inbound' ? '📥 Inbound' : '📤 Outbound'}
-                        </span>
-                        
-                        {/* BADGE WAREHOUSE */}
-                        <span className="flex items-center gap-1 bg-purple-100 text-purple-700 border border-purple-200 px-3 py-1 rounded-lg text-xs font-bold shadow-sm">
-                            <Warehouse size={12} /> {process.warehouse || 'N/A'}
-                        </span>
-
-                        <span className="text-gray-600 bg-gray-100 px-3 py-1 rounded-lg font-medium">
-                          Meta: <strong className="text-gray-900">{process.standardProductivity}</strong> un/h
-                        </span>
-                        <span className="text-gray-500 bg-gray-50 px-3 py-1 rounded-lg text-xs font-medium">
-                          {getSubprocesses(process).length} subprocesso{getSubprocesses(process).length !== 1 ? 's' : ''}
-                        </span>
+                    <div className="flex-1">
+                      <div className="flex items-center gap-3 mb-2">
+                        <h4 className="font-bold text-xl text-gray-900">{process.name}</h4>
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${process.type === 'Inbound' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>{process.type}</span>
+                      </div>
+                      
+                      <div className="flex items-center gap-4 text-sm">
+                        <div className="flex items-center gap-1.5 text-gray-600 bg-gray-50 px-3 py-1.5 rounded-lg border border-gray-100">
+                            <Zap size={14} className="text-dhl-yellow"/> 
+                            <span className="font-bold">{process.standardProductivity}</span> <span className="text-xs text-gray-400">UPH</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 text-gray-600 bg-gray-50 px-3 py-1.5 rounded-lg border border-gray-100">
+                            <Activity size={14} className="text-blue-500"/> 
+                            <span className="font-bold">{(process.efficiency * 100).toFixed(0)}%</span> <span className="text-xs text-gray-400">Efic.</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 text-gray-600 bg-gray-50 px-3 py-1.5 rounded-lg border border-gray-100">
+                            <Clock size={14} className="text-orange-500"/> 
+                            <span className="font-bold">{process.travelTime}</span> <span className="text-xs text-gray-400">min</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 text-gray-600 bg-gray-50 px-3 py-1.5 rounded-lg border border-gray-100">
+                            <Warehouse size={14} className="text-purple-500"/> 
+                            <span className="font-bold">{process.warehouse || 'N/A'}</span>
+                        </div>
                       </div>
                     </div>
-                  </div>
 
-                  <div className="flex items-center gap-2">
-                    <button 
-                      onClick={(e) => { e.stopPropagation(); setEditingProcess(process); }}
-                      className="group relative inline-flex items-center justify-center w-10 h-10 text-blue-600 hover:text-white transition-all duration-300 rounded-xl overflow-hidden shadow-sm hover:shadow-lg"
-                      title="Editar Processo"
-                    >
-                      <div className="absolute inset-0 bg-blue-600 transform scale-0 group-hover:scale-100 transition-transform duration-300 rounded-xl"></div>
-                      <Edit size={18} className="relative z-10" />
-                    </button>
-
-                    <button 
-                      onClick={(e) => { e.stopPropagation(); handleDeleteProcess(process.id); }}
-                      className="group relative inline-flex items-center justify-center w-10 h-10 text-gray-400 hover:text-white transition-all duration-300 rounded-xl overflow-hidden shadow-sm hover:shadow-lg"
-                      title="Excluir Processo"
-                    >
-                      <div className="absolute inset-0 bg-red-500 transform scale-0 group-hover:scale-100 transition-transform duration-300 rounded-xl"></div>
-                      <Trash2 size={18} className="relative z-10" />
-                    </button>
-                    
-                    <div className="w-px h-8 bg-gray-300 mx-2"></div>
-                    
-                    <div className={`p-2 rounded-lg transition-all duration-300 ${
-                      expandedProcessId === process.id ? 'bg-dhl-yellow/10' : 'bg-gray-100'
-                    }`}>
-                      {expandedProcessId === process.id 
-                        ? <ChevronUp className="text-gray-700" size={20} /> 
-                        : <ChevronDown className="text-gray-400" size={20} />
-                      }
+                    <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button onClick={(e) => { e.stopPropagation(); setEditingProcess(process); }} className="p-2 bg-blue-50 text-blue-600 rounded-xl hover:bg-blue-100 transition-colors"><Edit size={20} /></button>
+                        <button onClick={(e) => { e.stopPropagation(); handleDeleteProcess(process.id); }} className="p-2 bg-red-50 text-red-600 rounded-xl hover:bg-red-100 transition-colors"><Trash2 size={20} /></button>
+                        <div className={`transform transition-transform duration-300 ${expandedProcessId === process.id ? 'rotate-180' : ''}`}>
+                            <ChevronDown size={24} className="text-gray-400" />
+                        </div>
                     </div>
                   </div>
                 </div>
 
                 {/* ÁREA EXPANDIDA (SUBPROCESSOS) */}
                 {expandedProcessId === process.id && (
-                  <div className="bg-gradient-to-br from-gray-50 to-white p-6 border-t-2 border-gray-100">
-                    <div className="flex items-center gap-2 mb-5">
-                      <div className="w-10 h-10 bg-gradient-to-br from-dhl-yellow to-yellow-500 rounded-xl flex items-center justify-center shadow-lg">
-                        <Layers className="text-white" size={18} />
-                      </div>
-                      <h5 className="text-lg font-bold text-gray-900">Subprocessos</h5>
-                    </div>
+                  <div className="bg-gray-50/50 p-6 border-t border-gray-100 animate-fade-in-up">
+                    <h5 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-4 flex items-center gap-2"><Layers size={16}/> Subprocessos Vinculados</h5>
 
-                    <div className="space-y-3 mb-6">
-                      {getSubprocesses(process).length === 0 ? (
-                        <div className="flex items-center gap-3 p-4 bg-yellow-50 border-2 border-yellow-200 rounded-xl text-yellow-700">
-                          <AlertTriangle size={20} />
-                          <span className="font-medium">Nenhum subprocesso cadastrado. Adicione abaixo.</span>
-                        </div>
-                      ) : (
-                        getSubprocesses(process).map((sub: Subprocess) => (
-                          <div key={sub.id} className="bg-white p-4 rounded-xl border-2 border-gray-100 shadow-sm hover:shadow-md transition-all duration-300">
+                    <div className="grid grid-cols-1 gap-3 mb-6">
+                      {getSubprocesses(process).map((sub: Subprocess) => (
+                        <div key={sub.id} className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm flex flex-col md:flex-row items-center justify-between gap-4 hover:border-dhl-yellow transition-colors">
                             {editingSubprocess?.id === sub.id ? (
-                              // MODO EDIÇÃO SUB
-                              <div className="flex items-center gap-3">
-                                <input 
-                                  type="text" 
-                                  className="flex-1 px-4 py-2.5 border-2 border-blue-300 rounded-xl text-sm font-medium outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/20 transition-all"
-                                  value={editingSubprocess.name}
-                                  onChange={e => setEditingSubprocess({...editingSubprocess, name: e.target.value})}
-                                />
-                                <input 
-                                  type="number" 
-                                  className="w-28 px-4 py-2.5 border-2 border-blue-300 rounded-xl text-sm font-medium outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/20 transition-all"
-                                  value={editingSubprocess.standardProductivity}
-                                  onChange={e => setEditingSubprocess({...editingSubprocess, standardProductivity: Number(e.target.value)})}
-                                />
-                                <button onClick={handleUpdateSubprocess} className="bg-blue-600 text-white p-2.5 rounded-xl hover:bg-blue-700 transition-all shadow-md"><Check size={18} /></button>
-                                <button onClick={() => setEditingSubprocess(null)} className="bg-gray-200 text-gray-600 p-2.5 rounded-xl hover:bg-gray-300 transition-all"><X size={18} /></button>
-                              </div>
+                                // EDITANDO SUB (CORREÇÃO DE INPUT 100%)
+                                <div className="flex flex-wrap gap-3 w-full items-center">
+                                    <input type="text" className="flex-1 px-4 py-2 border rounded-lg font-bold text-gray-700" value={editingSubprocess.name} onChange={e => setEditingSubprocess({...editingSubprocess, name: e.target.value})} />
+                                    <input type="number" className="w-24 px-3 py-2 border rounded-lg text-center" placeholder="UPH" value={editingSubprocess.standardProductivity} onChange={e => setEditingSubprocess({...editingSubprocess, standardProductivity: Number(e.target.value)})} />
+                                    <div className="relative">
+                                        <input type="number" className="w-20 px-3 py-2 border rounded-lg text-center" 
+                                            value={(editingSubprocess.efficiency * 100).toFixed(0)} 
+                                            onChange={e => setEditingSubprocess({...editingSubprocess, efficiency: Number(e.target.value) / 100})} 
+                                        />
+                                        <span className="absolute right-2 top-2 text-xs text-gray-400">%</span>
+                                    </div>
+                                    <input type="number" className="w-20 px-3 py-2 border rounded-lg text-center" placeholder="Min" value={editingSubprocess.travelTime} onChange={e => setEditingSubprocess({...editingSubprocess, travelTime: Number(e.target.value)})} />
+                                    
+                                    <button onClick={handleUpdateSubprocess} className="bg-green-500 text-white p-2 rounded-lg hover:bg-green-600"><Check size={18}/></button>
+                                    <button onClick={() => setEditingSubprocess(null)} className="bg-gray-200 text-gray-500 p-2 rounded-lg hover:bg-gray-300"><X size={18}/></button>
+                                </div>
                             ) : (
-                              // MODO VISUALIZAÇÃO SUB
-                              <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-4">
-                                  <div className="w-1.5 h-10 bg-gradient-to-b from-dhl-yellow to-yellow-500 rounded-full"></div>
-                                  <span className="font-bold text-gray-900">{sub.name}</span>
-                                </div>
-                                <div className="flex items-center gap-3">
-                                  <span className="text-sm font-medium text-gray-600 bg-gray-100 px-4 py-2 rounded-lg border border-gray-200">
-                                    Meta: <strong className="text-gray-900">{sub.standardProductivity}</strong> un/h
-                                  </span>
-                                  <div className="flex items-center gap-1">
-                                    <button onClick={() => setEditingSubprocess(sub)} className="text-blue-600 hover:bg-blue-50 p-2 rounded-lg transition-all"><Edit size={16} /></button>
-                                    <button onClick={() => handleDeleteSubprocess(sub.id)} className="text-gray-400 hover:text-red-500 hover:bg-red-50 p-2 rounded-lg transition-all"><Trash2 size={16} /></button>
-                                  </div>
-                                </div>
-                              </div>
+                                // VISUALIZANDO SUB
+                                <>
+                                    <div className="flex items-center gap-4">
+                                        <div className="w-1.5 h-10 bg-dhl-yellow rounded-full"></div>
+                                        <div>
+                                            <p className="font-bold text-gray-800 text-lg">{sub.name}</p>
+                                        </div>
+                                    </div>
+                                    
+                                    <div className="flex items-center gap-6">
+                                        <div className="text-center">
+                                            <p className="text-[10px] font-bold text-gray-400 uppercase">Meta</p>
+                                            <p className="font-bold text-gray-700">{sub.standardProductivity}</p>
+                                        </div>
+                                        <div className="text-center">
+                                            <p className="text-[10px] font-bold text-gray-400 uppercase">Efic.</p>
+                                            <p className="font-bold text-blue-600">{(sub.efficiency * 100).toFixed(0)}%</p>
+                                        </div>
+                                        <div className="text-center">
+                                            <p className="text-[10px] font-bold text-gray-400 uppercase">Tempo</p>
+                                            <p className="font-bold text-orange-600">{sub.travelTime}m</p>
+                                        </div>
+                                        
+                                        <div className="flex gap-2 pl-4 border-l border-gray-100">
+                                            <button onClick={() => setEditingSubprocess(sub)} className="text-blue-500 hover:bg-blue-50 p-2 rounded-lg transition-colors"><Edit size={16}/></button>
+                                            <button onClick={() => handleDeleteSubprocess(sub.id)} className="text-gray-400 hover:text-red-500 hover:bg-red-50 p-2 rounded-lg transition-colors"><Trash2 size={16}/></button>
+                                        </div>
+                                    </div>
+                                </>
                             )}
-                          </div>
-                        ))
-                      )}
+                        </div>
+                      ))}
                     </div>
 
-                    <div className="bg-gradient-to-br from-yellow-50 to-amber-50 p-5 rounded-xl border-2 border-dashed border-yellow-300">
-                      <div className="flex flex-col md:flex-row items-center gap-3">
-                        <input 
-                          type="text" 
-                          placeholder="Nome do Novo Subprocesso..."
-                          className="flex-1 px-4 py-3 border-2 border-yellow-200 rounded-xl text-sm font-medium outline-none focus:border-dhl-yellow focus:ring-4 focus:ring-dhl-yellow/20 bg-white transition-all"
-                          value={newSubprocess.name}
-                          onChange={e => setNewSubprocess({...newSubprocess, name: e.target.value})}
-                        />
-                        <input 
-                          type="number" 
-                          placeholder="Meta (UPH)"
-                          className="w-full md:w-36 px-4 py-3 border-2 border-yellow-200 rounded-xl text-sm font-medium outline-none focus:border-dhl-yellow focus:ring-4 focus:ring-dhl-yellow/20 bg-white transition-all"
-                          value={newSubprocess.standardProductivity || ''}
-                          onChange={e => setNewSubprocess({...newSubprocess, standardProductivity: Number(e.target.value)})}
-                        />
-                        <button 
-                          disabled={subLoading}
-                          onClick={() => handleCreateSubprocess(process.id)}
-                          className="btn-hover bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white px-6 py-3 rounded-xl font-bold text-sm flex items-center gap-2 transition-all shadow-lg hover:shadow-xl w-full md:w-auto justify-center disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          {subLoading ? <Loader2 className="animate-spin" size={18} /> : <Plus size={18} />} Adicionar
-                        </button>
-                      </div>
+                    {/* ADD SUBPROCESS FORM */}
+                    <div className="bg-white p-5 rounded-xl border-2 border-dashed border-gray-300 hover:border-dhl-yellow transition-colors group">
+                        <div className="flex items-center gap-2 mb-3 text-gray-400 group-hover:text-dhl-yellow transition-colors">
+                            <Plus size={18} /> <span className="font-bold text-sm">Adicionar Novo Subprocesso</span>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
+                            <div className="md:col-span-2">
+                                <input type="text" className="w-full px-4 py-2.5 bg-gray-50 border-gray-200 border rounded-lg text-sm font-medium outline-none focus:bg-white focus:border-dhl-yellow transition-all" placeholder="Nome do Subprocesso" value={newSubprocess.name} onChange={e => setNewSubprocess({...newSubprocess, name: e.target.value})} />
+                            </div>
+                            <div>
+                                <input type="number" className="w-full px-4 py-2.5 bg-gray-50 border-gray-200 border rounded-lg text-sm font-medium text-center outline-none focus:bg-white focus:border-dhl-yellow transition-all" placeholder="UPH" value={newSubprocess.standardProductivity || ''} onChange={e => setNewSubprocess({...newSubprocess, standardProductivity: Number(e.target.value)})} />
+                            </div>
+                            <div>
+                                <input type="number" className="w-full px-4 py-2.5 bg-gray-50 border-gray-200 border rounded-lg text-sm font-medium text-center outline-none focus:bg-white focus:border-dhl-yellow transition-all" placeholder="Efic %" value={newSubprocess.efficiency} onChange={e => setNewSubprocess({...newSubprocess, efficiency: Number(e.target.value)})} />
+                            </div>
+                            <div>
+                                <input type="number" className="w-full px-4 py-2.5 bg-gray-50 border-gray-200 border rounded-lg text-sm font-medium text-center outline-none focus:bg-white focus:border-dhl-yellow transition-all" placeholder="Min" value={newSubprocess.travelTime} onChange={e => setNewSubprocess({...newSubprocess, travelTime: Number(e.target.value)})} />
+                            </div>
+                        </div>
+                        <div className="mt-3 flex justify-end">
+                            <button onClick={() => handleCreateSubprocess(process.id)} disabled={subLoading} className="bg-gray-900 text-white font-bold py-2 px-6 rounded-lg text-xs hover:bg-black transition-all flex items-center gap-2">
+                                {subLoading ? <Loader2 className="animate-spin" size={14}/> : <Plus size={14}/>} SALVAR SUBPROCESSO
+                            </button>
+                        </div>
                     </div>
+
                   </div>
                 )}
               </div>
             ))}
           </div>
 
-          {/* MODAL DE EDIÇÃO */}
+          {/* MODAL DE EDIÇÃO DO PAI */}
           {editingProcess && (
-            <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in">
-              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden animate-scale-in border-2 border-gray-100">
-                <div className="bg-gradient-to-br from-dhl-red to-red-600 p-6 flex justify-between items-center">
-                  <div className="flex items-center gap-3">
-                    <div className="w-12 h-12 bg-white/20 backdrop-blur-sm rounded-xl flex items-center justify-center shadow-lg">
-                      <Edit className="text-white" size={22} />
-                    </div>
-                    <div>
-                      <h3 className="font-bold text-2xl text-white drop-shadow-lg">Editar Processo</h3>
-                      <p className="text-white/90 text-sm mt-0.5">Atualize as informações</p>
-                    </div>
-                  </div>
-                  <button onClick={() => setEditingProcess(null)} className="text-white/80 hover:text-white hover:bg-white/20 p-2 rounded-xl transition-all"><X size={24} /></button>
+            <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-md animate-fade-in-up">
+              <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden border border-gray-100 transform scale-100">
+                <div className="bg-gradient-to-r from-gray-900 to-gray-800 p-6 flex justify-between items-center text-white">
+                    <h3 className="font-bold text-xl flex items-center gap-3"><Edit size={24} className="text-dhl-yellow"/> Editar Processo</h3>
+                    <button onClick={() => setEditingProcess(null)} className="hover:bg-white/10 p-2 rounded-full transition-all"><X size={24}/></button>
                 </div>
-                
-                <form onSubmit={handleUpdateProcess} className="p-6 space-y-5">
-                  <div>
-                    <label className="block text-sm font-bold text-gray-700 mb-2">Nome do Processo</label>
-                    <input 
-                      type="text" 
-                      className="input-focus w-full px-4 py-3 border-2 border-gray-200 rounded-xl outline-none bg-gray-50 font-medium transition-all duration-300 hover:border-gray-300 focus:bg-white focus:border-dhl-red focus:ring-4 focus:ring-dhl-red/20"
-                      value={editingProcess.name}
-                      onChange={e => setEditingProcess({...editingProcess, name: e.target.value})}
-                      required
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
+                <form onSubmit={handleUpdateProcess} className="p-8 space-y-6">
                     <div>
-                      <label className="block text-sm font-bold text-gray-700 mb-2">Tipo</label>
-                      <select 
-                        className="input-focus w-full px-4 py-3 border-2 border-gray-200 rounded-xl outline-none bg-gray-50 font-medium transition-all duration-300 hover:border-gray-300 focus:bg-white focus:border-dhl-red focus:ring-4 focus:ring-dhl-red/20"
-                        value={editingProcess.type}
-                        onChange={e => setEditingProcess({...editingProcess, type: e.target.value as 'Inbound' | 'Outbound'})}
-                      >
-                        <option value="Inbound">📥 Inbound</option>
-                        <option value="Outbound">📤 Outbound</option>
-                      </select>
+                        <label className="text-xs font-bold text-gray-400 uppercase mb-1">Nome</label>
+                        <input type="text" className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 font-bold text-gray-700 outline-none focus:bg-white focus:border-dhl-yellow focus:ring-4 focus:ring-yellow-50 transition-all" value={editingProcess.name} onChange={e => setEditingProcess({...editingProcess, name: e.target.value})} />
                     </div>
-                    <div>
-                      <label className="block text-sm font-bold text-gray-700 mb-2">Meta Geral (UPH)</label>
-                      <input 
-                        type="number" 
-                        className="input-focus w-full px-4 py-3 border-2 border-gray-200 rounded-xl outline-none bg-gray-50 font-medium transition-all duration-300 hover:border-gray-300 focus:bg-white focus:border-dhl-red focus:ring-4 focus:ring-dhl-red/20"
-                        value={editingProcess.standardProductivity}
-                        onChange={e => setEditingProcess({...editingProcess, standardProductivity: Number(e.target.value)})}
-                        required
-                      />
+                    <div className="grid grid-cols-2 gap-5">
+                        <div>
+                            <label className="text-xs font-bold text-gray-400 uppercase mb-1">UPH</label>
+                            <input type="number" className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 font-bold text-gray-700 outline-none focus:bg-white focus:border-dhl-yellow" value={editingProcess.standardProductivity} onChange={e => setEditingProcess({...editingProcess, standardProductivity: Number(e.target.value)})} />
+                        </div>
+                        <div>
+                            <label className="text-xs font-bold text-gray-400 uppercase mb-1">Eficiência (%)</label>
+                            {/* CORREÇÃO AQUI: Mostra 100, Salva 1.0 */}
+                            <input 
+                                type="number" 
+                                className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 font-bold text-blue-600 outline-none focus:bg-white focus:border-dhl-yellow" 
+                                value={(editingProcess.efficiency * 100).toFixed(0)} 
+                                onChange={e => setEditingProcess({...editingProcess, efficiency: Number(e.target.value) / 100})} 
+                            />
+                        </div>
+                        <div>
+                            <label className="text-xs font-bold text-gray-400 uppercase mb-1">Desloc. (min)</label>
+                            <input type="number" className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 font-bold text-orange-600 outline-none focus:bg-white focus:border-dhl-yellow" value={editingProcess.travelTime} onChange={e => setEditingProcess({...editingProcess, travelTime: Number(e.target.value)})} />
+                        </div>
+                        <div>
+                            <label className="text-xs font-bold text-gray-400 uppercase mb-1">Warehouse</label>
+                            <select className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 font-bold text-gray-700 outline-none focus:bg-white focus:border-dhl-yellow" value={editingProcess.warehouse} onChange={e => setEditingProcess({...editingProcess, warehouse: e.target.value})}>
+                                <option value="M03">M03</option>
+                                <option value="RC">RC</option>
+                            </select>
+                        </div>
                     </div>
-                    {/* WAREHOUSE NA EDIÇÃO */}
-                    <div className="col-span-2">
-                        <label className="block text-sm font-bold text-gray-700 mb-2">Warehouse</label>
-                        <select 
-                            className="input-focus w-full px-4 py-3 border-2 border-gray-200 rounded-xl outline-none bg-gray-50 font-medium transition-all duration-300 hover:border-gray-300 focus:bg-white focus:border-dhl-red focus:ring-4 focus:ring-dhl-red/20"
-                            value={editingProcess.warehouse || 'M03'}
-                            onChange={e => setEditingProcess({...editingProcess, warehouse: e.target.value})}
-                        >
-                            <option value="M03">M03</option>
-                            <option value="RC">RC</option>
-                        </select>
-                    </div>
-                  </div>
-
-                  <div className="flex gap-3 pt-4">
-                    <button type="button" onClick={() => setEditingProcess(null)} className="flex-1 py-3 bg-gray-100 text-gray-700 font-bold rounded-xl hover:bg-gray-200 transition-all shadow-sm">Cancelar</button>
-                    <button type="submit" className="btn-hover flex-1 py-3 bg-gradient-to-r from-dhl-yellow to-yellow-500 text-gray-900 font-bold rounded-xl hover:from-yellow-500 hover:to-yellow-600 transition-all shadow-lg hover:shadow-xl">Salvar Alterações</button>
-                  </div>
+                    <button type="submit" className="w-full bg-gradient-to-r from-dhl-red to-red-700 text-white font-bold py-4 rounded-xl hover:shadow-lg hover:scale-[1.02] transition-all">Salvar Alterações</button>
                 </form>
               </div>
             </div>

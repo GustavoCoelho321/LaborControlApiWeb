@@ -2,16 +2,18 @@ import { useState, useEffect, useMemo } from 'react';
 import { api } from '../Services/api';
 import { 
   Users, Clock, ArrowDownCircle, ArrowUpCircle, 
-  Save, RefreshCw, FileSpreadsheet, Box, ShieldAlert, Percent,
+  RefreshCw, FileSpreadsheet, Box, ShieldAlert, Percent,
   CornerDownRight, Download, PieChart, Zap, TrendingUp, 
-  CloudDownload, CalendarRange, Warehouse
+  CloudDownload, CalendarRange, Warehouse, Activity
 } from 'lucide-react';
 
-// --- INTERFACES ---
+// --- INTERFACES (SEM FADIGA) ---
 interface Subprocess {
   id: number;
   name: string;
   standardProductivity: number;
+  efficiency?: number; // 0.0 a 1.0 (ex: 0.85)
+  travelTime?: number; // Minutos por hora
   processId: number;
 }
 
@@ -21,6 +23,8 @@ interface Process {
   type: 'Inbound' | 'Outbound';
   warehouse?: string;
   standardProductivity: number;
+  efficiency?: number; // 0.0 a 1.0 (ex: 0.85)
+  travelTime?: number; // Minutos por hora
   subprocesses: Subprocess[];
 }
 
@@ -32,7 +36,9 @@ interface PlanRow {
   name: string;
   operationType: 'Inbound' | 'Outbound';
   warehouse?: string;
-  meta: number;
+  metaBase: number; 
+  metaReal: number; // Meta com eficiência
+  travelTime: number; 
   splitPercentage: number;
   volumeCalculated: number;
   hours: number;
@@ -40,7 +46,6 @@ interface PlanRow {
   hcFinal: number;
 }
 
-// Interface atualizada com o campo do JSON
 interface MonthlyForecastItem {
   date: string;
   rcRecebimento: number; 
@@ -105,85 +110,55 @@ export function Planning() {
 
   // --- IMPORTAR FORECAST ---
   async function handleImportForecast() {
-    if (!startDate || !endDate) {
-        alert("Selecione a data inicial e final.");
-        return;
-    }
-    if (startDate > endDate) {
-        alert("A data inicial não pode ser maior que a final.");
-        return;
-    }
+    if (!startDate || !endDate) return alert("Selecione a data inicial e final.");
+    if (startDate > endDate) return alert("A data inicial não pode ser maior que a final.");
 
     setImporting(true);
     try {
         let allData: MonthlyForecastItem[] = [];
-        const [startY, startM] = startDate.split('-').map(Number);
-        const [endY, endM] = endDate.split('-').map(Number);
+        const startD = new Date(startDate);
+        const endD = new Date(endDate);
+        
+        let currentIterDate = new Date(startD.getFullYear(), startD.getMonth(), 1);
+        const finalIterDate = new Date(endD.getFullYear(), endD.getMonth(), 1);
 
-        let curY = startY;
-        let curM = startM;
-
-        // Loop para buscar dados
-        while (curY < endY || (curY === endY && curM <= endM)) {
+        while (currentIterDate <= finalIterDate) {
+            const year = currentIterDate.getFullYear();
+            const month = currentIterDate.getMonth() + 1;
             try {
-                const response = await api.get<ForecastResponse>('/forecast/monthly', {
-                    params: { year: curY, month: curM }
-                });
-                if (response.data && response.data.data) {
-                    allData = [...allData, ...response.data.data];
-                }
-            } catch (err) {
-                console.warn(`Sem dados para ${curM}/${curY}`);
-            }
-            curM++;
-            if (curM > 12) { curM = 1; curY++; }
+                const response = await api.get<ForecastResponse>('/forecast/monthly', { params: { year, month } });
+                if (response.data?.data) allData = [...allData, ...response.data.data];
+            } catch (err) { console.warn(`Sem dados para ${month}/${year}`); }
+            currentIterDate.setMonth(currentIterDate.getMonth() + 1);
         }
 
-        // Filtra os dias exatos
         const daysInRange = allData.filter(item => {
             const itemDate = item.date.split('T')[0];
             return itemDate >= startDate && itemDate <= endDate;
         });
 
         if (daysInRange.length > 0) {
-            let finalIn = 0;
-            let finalOut = 0;
+            let sumIn = 0;
+            let sumOut = 0;
+            daysInRange.forEach(item => {
+               if (selectedWarehouse === 'RC') {
+                   sumIn += item.rcRecebimento;
+               } else {
+                   sumIn += item.inboundM03;
+                   sumOut += item.outboundM03;
+               }
+            });
 
-            // --- LÓGICA CONDICIONAL: RC vs OUTROS ---
-            if (selectedWarehouse === 'RC') {
-                const sumRC = daysInRange.reduce((acc, item) => acc + item.rcRecebimento, 0);
-                const avgRC = sumRC / daysInRange.length; 
+            const avgIn = sumIn / daysInRange.length;
+            const avgOut = sumOut / daysInRange.length;
 
-                finalIn = Math.round(avgRC * 1000); 
-                finalOut = 0; 
-            } else {
-                const sumIn = daysInRange.reduce((acc, item) => acc + item.inboundM03, 0);
-                const sumOut = daysInRange.reduce((acc, item) => acc + item.outboundM03, 0);
-
-                const avgIn = sumIn / daysInRange.length;
-                const avgOut = sumOut / daysInRange.length;
-
-                finalIn = Math.round(avgIn * 1000);
-                finalOut = Math.round(avgOut * 1000);
-            }
-
-            setVolInbound(finalIn);
-            setVolOutbound(finalOut);
-
-            alert(
-                `Forecast Importado (${selectedWarehouse})\n` +
-                `Período: ${startDate} até ${endDate}\n` +
-                `Dias calculados: ${daysInRange.length}\n` +
-                `--------------------------------\n` +
-                `Inbound Definido: ${finalIn.toLocaleString()}\n` +
-                `Outbound Definido: ${finalOut.toLocaleString()}`
-            );
+            setVolInbound(Math.round(avgIn * 1000));
+            setVolOutbound(Math.round(avgOut * 1000));
+            alert(`Forecast Importado: ${daysInRange.length} dias considerados.`);
         } else {
             alert(`Nenhum dado encontrado.`);
         }
-
     } catch (error) {
-        console.error("Erro ao importar forecast", error);
         alert("Erro de conexão.");
     } finally {
         setImporting(false);
@@ -198,24 +173,38 @@ export function Planning() {
     if (viewMode === '2') shiftMultiplier = shiftDist.s2 / 100;
     if (viewMode === '3') shiftMultiplier = shiftDist.s3 / 100;
 
-    // Filtra processos
     const filteredProcesses = processes.filter(p => {
         if (selectedWarehouse === 'All') return true;
-        return p.warehouse === selectedWarehouse;
+        return !p.warehouse || p.warehouse === selectedWarehouse;
     });
 
     filteredProcesses.forEach(proc => {
-      const dayVol = proc.type === 'Inbound' ? volInbound : volOutbound;
-      const macroVol = dayVol * shiftMultiplier;
+      const baseVol = proc.type === 'Inbound' ? volInbound : volOutbound;
+      const macroVol = baseVol * shiftMultiplier;
 
       const pKey = `p-${proc.id}`;
       const pSplit = splits[pKey] ?? 100;
       const pVol = macroVol * (pSplit / 100);
       
-      const pHours = proc.standardProductivity > 0 ? pVol / proc.standardProductivity : 0;
-      const pHcBase = workingHours > 0 ? pHours / workingHours : 0;
+      // 1. APLICAÇÃO DA EFICIÊNCIA (Sem Fadiga)
+      const efficiencyFactor = proc.efficiency ?? 1; 
+      const realUPH = proc.standardProductivity * efficiencyFactor;
+
+      // 2. CÁLCULO DAS HORAS NECESSÁRIAS
+      const pHoursNeeded = realUPH > 0 ? pVol / realUPH : 0;
       
-      // REGRA: Arredondar SEMPRE para cima (Math.ceil)
+      // 3. APLICAÇÃO DO DESLOCAMENTO NA JORNADA
+      const travelMinutesPerHour = proc.travelTime || 0;
+      // Minutos totais perdidos na jornada = (Minutos/Hora) * HorasJornada
+      // Ex: 5 min/h * 7.33h = ~36 min
+      const totalTravelHours = (travelMinutesPerHour * workingHours) / 60;
+      
+      const netWorkingHours = Math.max(0.1, workingHours - totalTravelHours);
+
+      // 4. HC BASE
+      const pHcBase = netWorkingHours > 0 ? pHoursNeeded / netWorkingHours : 0;
+      
+      // 5. HC FINAL (Absenteísmo)
       const pHcFinal = Math.ceil(pHcBase * (1 + (absFactor / 100)));
 
       rows.push({
@@ -225,24 +214,37 @@ export function Planning() {
         name: proc.name,
         operationType: proc.type,
         warehouse: proc.warehouse,
-        meta: proc.standardProductivity,
+        metaBase: proc.standardProductivity,
+        metaReal: realUPH,
+        travelTime: proc.travelTime || 0,
         splitPercentage: pSplit,
         volumeCalculated: pVol,
-        hours: pHours,
+        hours: pHoursNeeded,
         hcBase: pHcBase,
         hcFinal: pHcFinal
       });
 
+      // --- SUBPROCESSOS ---
       const subs = proc.subprocesses || []; 
       subs.forEach(sub => {
         const sKey = `s-${sub.id}`;
         const sSplit = splits[sKey] ?? 100; 
         const sVol = macroVol * (sSplit / 100);
 
-        const sHours = sub.standardProductivity > 0 ? sVol / sub.standardProductivity : 0;
-        const sHcBase = workingHours > 0 ? sHours / workingHours : 0;
-        
-        // REGRA: Arredondar SEMPRE para cima (Math.ceil)
+        // 1. Eficiência
+        const sEffFactor = sub.efficiency ?? 1;
+        const sRealUPH = sub.standardProductivity * sEffFactor;
+
+        // 2. Horas Necessárias
+        const sHoursNeeded = sRealUPH > 0 ? sVol / sRealUPH : 0;
+
+        // 3. Deslocamento
+        const sTravelMinutesPerHour = sub.travelTime || 0;
+        const sTotalTravelHours = (sTravelMinutesPerHour * workingHours) / 60;
+        const sNetWorkingHours = Math.max(0.1, workingHours - sTotalTravelHours);
+
+        // 4. HC
+        const sHcBase = sNetWorkingHours > 0 ? sHoursNeeded / sNetWorkingHours : 0;
         const sHcFinal = Math.ceil(sHcBase * (1 + (absFactor / 100)));
 
         rows.push({
@@ -253,10 +255,12 @@ export function Planning() {
           name: sub.name,
           operationType: proc.type,
           warehouse: proc.warehouse, 
-          meta: sub.standardProductivity,
+          metaBase: sub.standardProductivity,
+          metaReal: sRealUPH,
+          travelTime: sub.travelTime || 0,
           splitPercentage: sSplit,
           volumeCalculated: sVol,
-          hours: sHours,
+          hours: sHoursNeeded,
           hcBase: sHcBase,
           hcFinal: sHcFinal
         });
@@ -272,19 +276,21 @@ export function Planning() {
   };
 
   const handleExport = () => {
-    // Removida coluna Horas
-    const headers = ["Processo", "Tipo", "Warehouse", "Meta UPH", "% Aplicada", "Volume Calc", "HC Final"];
+    const headers = ["Processo", "Tipo", "CD", "Meta Base", "Meta Real", "Desloc(min/h)", "% Vol", "Volume", "Horas Nec.", "HC Final"];
     const csvRows = tableRows.map(row => {
-      const name = row.type === 'Subprocess' ? `  > ${row.name}` : row.name;
+      const name = row.type === 'Subprocess' ? ` > ${row.name}` : row.name;
+      
       return [
         `"${name}"`, 
         row.operationType,
         row.warehouse || '-',
-        row.meta,
+        row.metaBase,
+        row.metaReal.toFixed(1),
+        row.travelTime,
         `${row.splitPercentage}%`,
         Math.round(row.volumeCalculated),
-        // Removida coluna Horas
-        row.hcFinal.toFixed(0) // HC Final como inteiro
+        row.hours.toFixed(2),
+        row.hcFinal.toFixed(0)
       ].join(";");
     });
     const csvContent = "\uFEFF" + [headers.join(";"), ...csvRows].join("\n");
@@ -292,15 +298,13 @@ export function Planning() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.setAttribute("href", url);
-    link.setAttribute("download", `Planejamento_${startDate}_${viewMode}_${selectedWarehouse}.csv`);
+    link.setAttribute("download", `Planejamento_${startDate}_${viewMode}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   };
 
   const totalHC = tableRows.reduce((acc, row) => acc + row.hcFinal, 0);
-  const totalInboundHC = tableRows.filter(r => r.operationType === 'Inbound').reduce((acc, row) => acc + row.hcFinal, 0);
-  const totalOutboundHC = tableRows.filter(r => r.operationType === 'Outbound').reduce((acc, row) => acc + row.hcFinal, 0);
 
   return (
     <>
@@ -352,14 +356,11 @@ export function Planning() {
                 </div>
                 
                 <div className="flex flex-col xl:flex-row items-stretch gap-3">
-                  
-                  {/* BOTÕES DE AÇÃO */}
                   <div className="flex gap-3">
                     <button 
                         onClick={handleImportForecast}
                         disabled={importing}
                         className="btn-hover bg-blue-600 hover:bg-blue-700 text-white px-4 py-3 rounded-xl font-bold flex items-center justify-center gap-2 shadow-lg hover:shadow-xl transition-all disabled:opacity-70 disabled:cursor-not-allowed flex-1 whitespace-nowrap"
-                        title="Carregar volumes da planilha do Google. Calcula a média se for um intervalo."
                     >
                         {importing ? <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div> : <CloudDownload size={20} />}
                         <span className="hidden sm:inline">Importar</span>
@@ -373,64 +374,38 @@ export function Planning() {
                     </button>
                   </div>
 
-                  {/* SELETOR DE INTERVALO E FILTROS */}
                   <div className="bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden flex flex-wrap xl:flex-nowrap">
-                      {/* DATA INICIAL */}
                       <div className="p-3 bg-gradient-to-br from-gray-50 to-white flex flex-col justify-center border-r border-gray-200 min-w-[120px] flex-1">
                         <div className="flex items-center gap-1 mb-1">
                             <CalendarRange size={12} className="text-gray-400"/>
                             <p className="text-[10px] font-bold text-gray-500 uppercase">De</p>
                         </div>
-                        <input 
-                          type="date" 
-                          className="font-bold text-gray-800 bg-transparent outline-none cursor-pointer text-xs sm:text-sm w-full"
-                          value={startDate}
-                          onChange={e => setStartDate(e.target.value)}
-                        />
+                        <input type="date" className="font-bold text-gray-800 bg-transparent outline-none cursor-pointer text-xs sm:text-sm w-full" value={startDate} onChange={e => setStartDate(e.target.value)} />
                       </div>
 
-                      {/* DATA FINAL */}
                       <div className="p-3 bg-gradient-to-br from-gray-50 to-white flex flex-col justify-center border-r border-gray-200 min-w-[120px] flex-1">
                         <div className="flex items-center gap-1 mb-1">
                             <CalendarRange size={12} className="text-gray-400"/>
                             <p className="text-[10px] font-bold text-gray-500 uppercase">Até</p>
                         </div>
-                        <input 
-                          type="date" 
-                          className="font-bold text-gray-800 bg-transparent outline-none cursor-pointer text-xs sm:text-sm w-full"
-                          value={endDate}
-                          min={startDate}
-                          onChange={e => setEndDate(e.target.value)}
-                        />
+                        <input type="date" className="font-bold text-gray-800 bg-transparent outline-none cursor-pointer text-xs sm:text-sm w-full" value={endDate} min={startDate} onChange={e => setEndDate(e.target.value)} />
                       </div>
 
-                      {/* SELETOR WAREHOUSE */}
                       <div className="p-3 bg-gradient-to-br from-gray-50 to-white flex flex-col justify-center border-r border-gray-200 min-w-[100px] flex-1">
                         <div className="flex items-center gap-1 mb-1">
                             <Warehouse size={12} className="text-gray-400"/>
                             <p className="text-[10px] font-bold text-gray-500 uppercase">CD</p>
                         </div>
-                        <select 
-                          className="bg-transparent font-bold text-gray-700 outline-none cursor-pointer text-xs sm:text-sm w-full"
-                          value={selectedWarehouse}
-                          onChange={e => setSelectedWarehouse(e.target.value)}
-                        >
+                        <select className="bg-transparent font-bold text-gray-700 outline-none cursor-pointer text-xs sm:text-sm w-full" value={selectedWarehouse} onChange={e => setSelectedWarehouse(e.target.value)}>
                           <option value="All">Todos</option>
                           <option value="M03">M03</option>
-                          <option value="M04">M04</option>
-                          <option value="M05">M05</option>
                           <option value="RC">RC</option>
                         </select>
                       </div>
                       
-                      {/* VISÃO */}
                       <div className="p-3 bg-gradient-to-br from-gray-50 to-white flex flex-col justify-center min-w-[110px] flex-1">
                         <p className="text-[10px] font-bold text-gray-500 uppercase mb-1">Visão</p>
-                        <select 
-                          className="bg-transparent font-bold text-gray-700 outline-none cursor-pointer text-xs sm:text-sm w-full"
-                          value={viewMode}
-                          onChange={e => setViewMode(e.target.value as any)}
-                        >
+                        <select className="bg-transparent font-bold text-gray-700 outline-none cursor-pointer text-xs sm:text-sm w-full" value={viewMode} onChange={e => setViewMode(e.target.value as any)}>
                           <option value="Full">Full Day</option>
                           <option value="1">1º Turno</option>
                           <option value="2">2º Turno</option>
@@ -438,7 +413,6 @@ export function Planning() {
                         </select>
                       </div>
                   </div>
-
                 </div>
               </div>
             </div>
@@ -465,35 +439,17 @@ export function Planning() {
                     <span className="text-xs font-bold text-white uppercase">Distribuição de Turnos</span>
                   </div>
                   <div className="flex items-center gap-3">
-                  <div className="flex items-center gap-1.5 bg-gradient-to-r from-dhl-red/30 to-dhl-yellow/30 px-2 py-1 rounded-lg border border-white/30">
+                    <div className="flex items-center gap-1.5 bg-gradient-to-r from-dhl-red/30 to-dhl-yellow/30 px-2 py-1 rounded-lg border border-white/30">
                       <span className="text-xs font-bold text-white">T1</span>
-                      <input 
-                        type="number" 
-                        className="w-12 px-1 py-0.5 text-center border-2 border-white/50 bg-white/10 rounded text-xs font-black text-white placeholder-white/70 outline-none focus:border-white transition-all"
-                        onChange={e => setShiftDist({...shiftDist, s1: Number(e.target.value)})} 
-                        value={shiftDist.s1}
-                      />
-                      <span className="text-xs text-white/80">%</span>
+                      <input type="number" className="w-12 px-1 py-0.5 text-center border-2 border-white/50 bg-white/10 rounded text-xs font-black text-white outline-none" onChange={e => setShiftDist({...shiftDist, s1: Number(e.target.value)})} value={shiftDist.s1} />
                     </div>
                     <div className="flex items-center gap-1.5 bg-gradient-to-r from-dhl-red/30 to-dhl-yellow/30 px-2 py-1 rounded-lg border border-white/30">
                       <span className="text-xs font-bold text-white">T2</span>
-                      <input 
-                        type="number" 
-                        className="w-12 px-1 py-0.5 text-center border-2 border-white/50 bg-white/10 rounded text-xs font-black text-white placeholder-white/70 outline-none focus:border-white transition-all"
-                        onChange={e => setShiftDist({...shiftDist, s2: Number(e.target.value)})} 
-                        value={shiftDist.s2}
-                      />
-                      <span className="text-xs text-white/80">%</span>
+                      <input type="number" className="w-12 px-1 py-0.5 text-center border-2 border-white/50 bg-white/10 rounded text-xs font-black text-white outline-none" onChange={e => setShiftDist({...shiftDist, s2: Number(e.target.value)})} value={shiftDist.s2} />
                     </div>
                       <div className="flex items-center gap-1.5 bg-gradient-to-r from-dhl-red/30 to-dhl-yellow/30 px-2 py-1 rounded-lg border border-white/30">
                       <span className="text-xs font-bold text-white">T3</span>
-                      <input 
-                        type="number" 
-                        className="w-12 px-1 py-0.5 text-center border-2 border-white/50 bg-white/10 rounded text-xs font-black text-white placeholder-white/70 outline-none focus:border-white transition-all"
-                        onChange={e => setShiftDist({...shiftDist, s3: Number(e.target.value)})} 
-                        value={shiftDist.s3}
-                      />
-                      <span className="text-xs text-white/80">%</span>
+                      <input type="number" className="w-12 px-1 py-0.5 text-center border-2 border-white/50 bg-white/10 rounded text-xs font-black text-white outline-none" onChange={e => setShiftDist({...shiftDist, s3: Number(e.target.value)})} value={shiftDist.s3} />
                     </div>
                   </div>
                 </div>
@@ -502,64 +458,37 @@ export function Planning() {
 
             <div className="p-6">
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                {/* INBOUND */}
                 <div className="relative bg-gradient-to-br from-green-50 to-emerald-50 p-6 rounded-xl border-2 border-green-200 overflow-hidden group">
                   <div className="absolute top-0 right-0 w-24 h-24 bg-green-200 rounded-full -mr-12 -mt-12 opacity-20 group-hover:scale-150 transition-transform duration-500"></div>
                   <label className="text-xs font-bold text-green-700 uppercase mb-3 flex items-center gap-2 relative z-10">
                     <ArrowDownCircle size={16} /> Total Inbound (Média)
                   </label>
-                  <input 
-                    type="number" 
-                    className="input-focus w-full text-3xl font-black text-green-800 bg-white/50 border-2 border-green-300 rounded-xl px-4 py-3 focus:border-green-500 focus:ring-4 focus:ring-green-500/20 outline-none transition-all relative z-10"
-                    placeholder="0"
-                    value={volInbound || ''}
-                    onChange={e => setVolInbound(Number(e.target.value))}
-                  />
+                  <input type="number" className="input-focus w-full text-3xl font-black text-green-800 bg-white/50 border-2 border-green-300 rounded-xl px-4 py-3 focus:border-green-500 outline-none transition-all relative z-10" placeholder="0" value={volInbound || ''} onChange={e => setVolInbound(Number(e.target.value))} />
                 </div>
 
-                {/* OUTBOUND */}
                 <div className="relative bg-gradient-to-br from-blue-50 to-cyan-50 p-6 rounded-xl border-2 border-blue-200 overflow-hidden group">
                   <div className="absolute top-0 right-0 w-24 h-24 bg-blue-200 rounded-full -mr-12 -mt-12 opacity-20 group-hover:scale-150 transition-transform duration-500"></div>
                   <label className="text-xs font-bold text-blue-700 uppercase mb-3 flex items-center gap-2 relative z-10">
                     <ArrowUpCircle size={16} /> Total Outbound (Média)
                   </label>
-                  <input 
-                    type="number" 
-                    className="input-focus w-full text-3xl font-black text-blue-800 bg-white/50 border-2 border-blue-300 rounded-xl px-4 py-3 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/20 outline-none transition-all relative z-10"
-                    placeholder="0"
-                    value={volOutbound || ''}
-                    onChange={e => setVolOutbound(Number(e.target.value))}
-                  />
+                  <input type="number" className="input-focus w-full text-3xl font-black text-blue-800 bg-white/50 border-2 border-blue-300 rounded-xl px-4 py-3 focus:border-blue-500 outline-none transition-all relative z-10" placeholder="0" value={volOutbound || ''} onChange={e => setVolOutbound(Number(e.target.value))} />
                 </div>
 
-                {/* JORNADA */}
                 <div className="relative bg-gradient-to-br from-gray-50 to-slate-50 p-6 rounded-xl border-2 border-gray-200 overflow-hidden group">
                   <div className="absolute top-0 right-0 w-24 h-24 bg-gray-200 rounded-full -mr-12 -mt-12 opacity-20 group-hover:scale-150 transition-transform duration-500"></div>
                   <label className="text-xs font-bold text-gray-700 uppercase mb-3 flex items-center gap-2 relative z-10">
                     <Clock size={16} /> Jornada (Horas)
                   </label>
-                  <input 
-                    type="number" 
-                    step="0.01"
-                    className="input-focus w-full text-3xl font-black text-gray-800 bg-white/50 border-2 border-gray-300 rounded-xl px-4 py-3 text-center focus:border-gray-500 focus:ring-4 focus:ring-gray-500/20 outline-none transition-all relative z-10"
-                    value={workingHours}
-                    onChange={e => setWorkingHours(Number(e.target.value))}
-                  />
+                  <input type="number" step="0.01" className="input-focus w-full text-3xl font-black text-gray-800 bg-white/50 border-2 border-gray-300 rounded-xl px-4 py-3 text-center focus:border-gray-500 outline-none transition-all relative z-10" value={workingHours} onChange={e => setWorkingHours(Number(e.target.value))} />
                 </div>
 
-                {/* FATOR ABS */}
                 <div className="relative bg-gradient-to-br from-red-50 to-rose-50 p-6 rounded-xl border-2 border-red-200 overflow-hidden group">
                   <div className="absolute top-0 right-0 w-24 h-24 bg-red-200 rounded-full -mr-12 -mt-12 opacity-20 group-hover:scale-150 transition-transform duration-500"></div>
                   <label className="text-xs font-bold text-red-700 uppercase mb-3 flex items-center gap-2 relative z-10">
                     <ShieldAlert size={16} /> Fator ABS (%)
                   </label>
                   <div className="flex items-center justify-center gap-2 relative z-10">
-                    <input 
-                      type="number" 
-                      className="input-focus flex-1 text-3xl font-black leading-none text-red-800 bg-white/50 border-2 border-red-300 rounded-xl px-3 py-2.5 text-center focus:border-red-500 focus:ring-4 focus:ring-red-500/20 outline-none transition-all"
-                      value={absFactor}
-                      onChange={e => setAbsFactor(Number(e.target.value))}
-                    />
+                    <input type="number" className="input-focus flex-1 text-3xl font-black leading-none text-red-800 bg-white/50 border-2 border-red-300 rounded-xl px-3 py-2.5 text-center focus:border-red-500 outline-none transition-all" value={absFactor} onChange={e => setAbsFactor(Number(e.target.value))} />
                     <span className="text-2xl font-bold text-red-700">%</span>
                   </div>
                 </div>
@@ -569,25 +498,9 @@ export function Planning() {
 
           {/* CARDS DE RESULTADO */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <ResultCard 
-              title="Headcount Necessário" 
-              value={totalHC} 
-              subtitle={viewMode === 'Full' ? "Total do Dia (Todos os Turnos)" : `Para o ${viewMode}º Turno apenas`}
-              color="bg-gradient-to-br from-dhl-red to-red-600 text-white" 
-              icon={<Users />} 
-            />
-            <ResultCard 
-              title="Equipe Inbound" 
-              value={totalInboundHC} 
-              color="bg-white text-green-700 border-2 border-green-500 shadow-lg shadow-green-500/20" 
-              icon={<ArrowDownCircle />} 
-            />
-            <ResultCard 
-              title="Equipe Outbound" 
-              value={totalOutboundHC} 
-              color="bg-white text-blue-700 border-2 border-blue-500 shadow-lg shadow-blue-500/20" 
-              icon={<ArrowUpCircle />} 
-            />
+            <ResultCard title="Headcount Necessário" value={tableRows.reduce((acc, row) => acc + row.hcFinal, 0)} subtitle={viewMode === 'Full' ? "Total do Dia (Todos os Turnos)" : `Para o ${viewMode}º Turno apenas`} color="bg-gradient-to-br from-dhl-red to-red-600 text-white" icon={<Users />} />
+            <ResultCard title="Equipe Inbound" value={tableRows.filter(r => r.operationType === 'Inbound').reduce((acc, row) => acc + row.hcFinal, 0)} color="bg-white text-green-700 border-2 border-green-500 shadow-lg shadow-green-500/20" icon={<ArrowDownCircle />} />
+            <ResultCard title="Equipe Outbound" value={tableRows.filter(r => r.operationType === 'Outbound').reduce((acc, row) => acc + row.hcFinal, 0)} color="bg-white text-blue-700 border-2 border-blue-500 shadow-lg shadow-blue-500/20" icon={<ArrowUpCircle />} />
           </div>
 
           {/* TABELA DETALHADA */}
@@ -600,28 +513,11 @@ export function Planning() {
                   </div>
                   <div>
                     <h3 className="font-bold text-xl text-gray-900">Detalhamento do Planejamento</h3>
-                    <p className="text-sm text-gray-500 mt-0.5">Cálculo completo por processo e subprocesso</p>
+                    <p className="text-sm text-gray-500 mt-0.5">Cálculo completo com Eficiência e Deslocamento</p>
                   </div>
                 </div>
-                <div className="flex gap-2 mt-2">
-                    {viewMode !== 'Full' && (
-                        <div className="inline-flex items-center gap-2 bg-dhl-yellow/20 border-2 border-dhl-yellow text-dhl-red px-3 py-1.5 rounded-lg text-xs font-bold animate-pulse">
-                            <Zap size={14} />
-                            Turno {viewMode} ({shiftDist[`s${viewMode}` as keyof typeof shiftDist]}%)
-                        </div>
-                    )}
-                    {selectedWarehouse !== 'All' && (
-                        <div className="inline-flex items-center gap-2 bg-blue-50 border-2 border-blue-200 text-blue-700 px-3 py-1.5 rounded-lg text-xs font-bold">
-                            <Warehouse size={14} />
-                            {selectedWarehouse}
-                        </div>
-                    )}
-                </div>
               </div>
-              <button 
-                onClick={loadProcesses} 
-                className="group relative inline-flex items-center justify-center w-10 h-10 text-gray-400 hover:text-white transition-all duration-300 rounded-xl overflow-hidden shadow-sm hover:shadow-lg"
-              >
+              <button onClick={loadProcesses} className="group relative inline-flex items-center justify-center w-10 h-10 text-gray-400 hover:text-white transition-all duration-300 rounded-xl overflow-hidden shadow-sm hover:shadow-lg">
                 <div className="absolute inset-0 bg-dhl-red transform scale-0 group-hover:scale-100 transition-transform duration-300 rounded-xl"></div>
                 <RefreshCw size={18} className="relative z-10" />
               </button>
@@ -633,43 +529,22 @@ export function Planning() {
                   <tr>
                     <th className="px-6 py-4 text-left text-xs font-bold text-gray-600 uppercase tracking-wider">Processo</th>
                     <th className="px-6 py-4 text-center text-xs font-bold text-gray-600 uppercase tracking-wider">Tipo</th>
-                    <th className="px-6 py-4 text-center text-xs font-bold text-gray-600 uppercase tracking-wider">CD</th> {/* Nova Coluna */}
-                    <th className="px-6 py-4 text-right text-xs font-bold text-gray-600 uppercase tracking-wider">Meta</th>
-                    <th className="px-6 py-4 text-center text-xs font-bold text-gray-600 uppercase tracking-wider w-28">% Vol. Proc.</th> 
+                    <th className="px-6 py-4 text-right text-xs font-bold text-gray-600 uppercase tracking-wider">Meta Base</th>
+                    <th className="px-6 py-4 text-right text-xs font-bold text-blue-600 uppercase tracking-wider">Meta Real</th>
+                    <th className="px-6 py-4 text-center text-xs font-bold text-gray-600 uppercase tracking-wider">Desloc. (min/h)</th>
+                    <th className="px-6 py-4 text-center text-xs font-bold text-gray-600 uppercase tracking-wider w-24">% Vol.</th> 
                     <th className="px-6 py-4 text-right text-xs font-bold text-gray-600 uppercase tracking-wider">Volume</th>
                     <th className="px-6 py-4 text-center text-xs font-bold text-gray-800 uppercase tracking-wider bg-gray-100">HC Final</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {loading ? (
-                    <tr>
-                      <td colSpan={7} className="p-12 text-center">
-                        <div className="flex flex-col items-center gap-3">
-                          <RefreshCw className="animate-spin text-dhl-red" size={32} />
-                          <span className="text-gray-500 font-medium">Carregando dados...</span>
-                        </div>
-                      </td>
-                    </tr>
+                    <tr><td colSpan={8} className="p-12 text-center"><div className="flex flex-col items-center gap-3"><RefreshCw className="animate-spin text-dhl-red" size={32} /><span className="text-gray-500 font-medium">Carregando...</span></div></td></tr>
                   ) : tableRows.length === 0 ? (
-                    <tr>
-                      <td colSpan={7} className="p-12 text-center">
-                        <div className="flex flex-col items-center gap-3">
-                          <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center">
-                            <FileSpreadsheet className="text-gray-400" size={32} />
-                          </div>
-                          <span className="text-gray-500 font-medium">Nenhum processo encontrado com este filtro</span>
-                        </div>
-                      </td>
-                    </tr>
+                    <tr><td colSpan={8} className="p-12 text-center"><div className="flex flex-col items-center gap-3"><div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center"><FileSpreadsheet className="text-gray-400" size={32} /></div><span className="text-gray-500 font-medium">Nenhum processo encontrado com este filtro</span></div></td></tr>
                   ) : (
                     tableRows.map((row, index) => (
-                      <tr 
-                        key={row.uniqueKey} 
-                        className={`table-row ${
-                          row.type === 'Process' ? 'bg-white' : 'bg-gray-50/50'
-                        }`}
-                        style={{ animation: `fadeInUp 0.3s ease-out ${index * 0.02}s both` }}
-                      >
+                      <tr key={row.uniqueKey} className={`table-row ${row.type === 'Process' ? 'bg-white' : 'bg-gray-50/50'}`} style={{ animation: `fadeInUp 0.3s ease-out ${index * 0.02}s both` }}>
                         <td className="px-6 py-4">
                           {row.type === 'Process' ? (
                             <div className="flex items-center gap-3">
@@ -683,86 +558,38 @@ export function Planning() {
                             </div>
                           )}
                         </td>
-
                         <td className="px-6 py-4 text-center">
-                          {row.type === 'Process' && (
-                            <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold shadow-sm ${
-                              row.operationType === 'Inbound' 
-                                ? 'bg-gradient-to-r from-green-50 to-emerald-50 text-green-700 border border-green-200' 
-                                : 'bg-gradient-to-r from-blue-50 to-cyan-50 text-blue-700 border border-blue-200'
-                            }`}>
-                              {row.operationType === 'Inbound' ? '📥' : '📤'} {row.operationType}
-                            </span>
-                          )}
-                        </td>
-
-                        <td className="px-6 py-4 text-center">
-                            {row.type === 'Process' && row.warehouse && (
-                                <span className="inline-flex items-center gap-1 text-xs font-bold text-gray-500 bg-gray-100 px-2 py-1 rounded">
-                                    <Warehouse size={10} /> {row.warehouse}
+                            {row.type === 'Process' && (
+                                <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold shadow-sm ${row.operationType === 'Inbound' ? 'bg-gradient-to-r from-green-50 to-emerald-50 text-green-700 border border-green-200' : 'bg-gradient-to-r from-blue-50 to-cyan-50 text-blue-700 border border-blue-200'}`}>
+                                    {row.operationType === 'Inbound' ? '📥' : '📤'}
                                 </span>
                             )}
                         </td>
-                        
-                        <td className="px-6 py-4 text-right text-gray-600 font-mono font-bold">
-                          {row.meta}
-                        </td>
-
+                        <td className="px-6 py-4 text-right font-mono text-gray-400">{row.metaBase}</td>
+                        <td className="px-6 py-4 text-right font-mono font-bold text-blue-600">{row.metaReal.toFixed(0)}</td>
+                        <td className="px-6 py-4 text-center text-gray-500 font-medium">{row.travelTime > 0 ? row.travelTime + "'" : '-'}</td>
                         <td className="px-6 py-4 text-center">
                           <div className="flex items-center justify-center gap-1">
-                            <input 
-                              type="number" 
-                              min="0" 
-                              max="999"
-                              className={`w-14 px-2 py-1.5 text-center border-2 rounded-lg outline-none font-bold text-xs transition-all ${
-                                row.type === 'Process' 
-                                  ? 'border-gray-300 text-gray-700 bg-white hover:border-gray-400 focus:border-dhl-yellow focus:ring-2 focus:ring-dhl-yellow/20' 
-                                  : 'border-blue-300 text-blue-700 bg-blue-50/30 hover:border-blue-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20'
-                              }`}
-                              value={row.splitPercentage}
-                              onChange={(e) => handleSplitChange(row.uniqueKey, e.target.value)}
-                            />
+                            <input type="number" min="0" max="999" className={`w-14 px-2 py-1.5 text-center border-2 rounded-lg outline-none font-bold text-xs transition-all ${row.type === 'Process' ? 'border-gray-300 text-gray-700 bg-white hover:border-gray-400 focus:border-dhl-yellow' : 'border-blue-300 text-blue-700 bg-blue-50/30 hover:border-blue-400 focus:border-blue-500'}`} value={row.splitPercentage} onChange={(e) => handleSplitChange(row.uniqueKey, e.target.value)} />
                             <Percent size={12} className="text-gray-400" />
                           </div>
                         </td>
-
-                        <td className="px-6 py-4 text-right font-bold text-gray-700">
-                          {row.volumeCalculated.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                        </td>
-                        
-                        <td className={`px-6 py-4 text-center border-l-2 border-gray-200 ${
-                          row.type === 'Process' ? 'bg-gray-50' : ''
-                        }`}>
+                        <td className="px-6 py-4 text-right font-bold text-gray-700">{Math.round(row.volumeCalculated).toLocaleString()}</td>
+                        <td className={`px-6 py-4 text-center border-l-2 border-gray-200 ${row.type === 'Process' ? 'bg-gray-50' : ''}`}>
                           <div className="flex items-center justify-center gap-2">
-                            {row.hcFinal > 0 ? (
-                              <>
-                                <Users size={16} className={row.type === 'Process' ? "text-dhl-red" : "text-gray-400"} />
-                                <span className={`text-xl ${
-                                  row.type === 'Process' ? "font-black text-dhl-red" : "font-bold text-gray-600"
-                                }`}>
-                                  {row.hcFinal.toFixed(1)}
-                                </span>
-                              </>
-                            ) : (
-                              <span className="text-gray-300 text-lg">-</span>
-                            )}
+                            {row.hcFinal > 0 ? (<><Users size={16} className={row.type === 'Process' ? "text-dhl-red" : "text-gray-400"} /><span className={`text-xl ${row.type === 'Process' ? "font-black text-dhl-red" : "font-bold text-gray-600"}`}>{row.hcFinal.toFixed(1)}</span></>) : (<span className="text-gray-300 text-lg">-</span>)}
                           </div>
                         </td>
                       </tr>
                     ))
                   )}
                 </tbody>
-                {!loading && tableRows.length > 0 && (
-                  <tfoot className="bg-gradient-to-r from-gray-100 to-gray-50 border-t-2 border-gray-300">
+                {tableRows.length > 0 && (
+                  <tfoot className="bg-gray-100 font-bold text-gray-700">
                     <tr>
-                      <td colSpan={6} className="px-6 py-5 text-right uppercase text-xs font-bold text-gray-600 tracking-wider">
-                        Total {viewMode === 'Full' ? 'Dia' : 'Turno'}:
-                      </td>
-                      <td className="px-6 py-5 text-center border-l-2 border-gray-300 bg-dhl-red/5">
-                        <div className="flex items-center justify-center gap-2">
-                          <Users size={20} className="text-dhl-red" />
-                          <span className="text-3xl font-black text-dhl-red">{totalHC.toFixed(1)}</span>
-                        </div>
+                      <td colSpan={7} className="px-6 py-4 text-right uppercase text-xs">Total HC:</td>
+                      <td className="px-6 py-4 text-center text-xl text-dhl-red">
+                        {tableRows.reduce((acc, row) => acc + row.hcFinal, 0).toFixed(1)}
                       </td>
                     </tr>
                   </tfoot>
@@ -770,7 +597,6 @@ export function Planning() {
               </table>
             </div>
           </div>
-
         </div>
       </div>
     </>
@@ -786,9 +612,7 @@ function ResultCard({ title, value, subtitle, color, icon }: any) {
         <p className="text-5xl font-black mb-1">{value.toFixed(1)}</p>
         {subtitle && <p className="text-xs opacity-80 mt-2 font-medium">{subtitle}</p>}
       </div>
-      <div className="relative z-10 opacity-20 transform scale-150">
-        {icon}
-      </div>
+      <div className="relative z-10 opacity-20 transform scale-150">{icon}</div>
     </div>
   );
 }

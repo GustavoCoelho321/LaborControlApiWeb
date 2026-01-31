@@ -1,6 +1,10 @@
 // src/utils/AIScheduler.ts
 
-// MATRIZ DE CONSOLIDAÇÃO
+// --- CONSTANTES DE NEGÓCIO ---
+const SLA_INBOUND_HOURS = 4;   // Meta: Armazenar tudo em até 4h
+const SLA_OUTBOUND_HOURS = 18; // Meta: Expedir em até 18h após picking
+
+// MATRIZ DE CONSOLIDAÇÃO (Importante para o cálculo de input real)
 const CONSOLIDATION_MATRIX: number[][] = [
   [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 70, 70, 70, 70, 70, 70, 167, 115, 106, 94],
   [65, 76, 61, 56, 57, 58, 59, 69, 62, 63, 64, 64, 64, 65, 67, 68, 69, 70, 71, 72, 74, 77, 78, 115],
@@ -54,7 +58,7 @@ export class AIScheduler {
     const newHcMatrix: Record<string, number> = {};
     const outputsByProcess: Record<number, number[][]> = {};
     
-    // Identificação de IDs e Fluxo
+    // Mapeamento de IDs
     let pickingId: number | null = null;
     const sortingIds: number[] = [];
     
@@ -65,7 +69,7 @@ export class AIScheduler {
         if (name.includes('sort') || name.includes('classificação')) sortingIds.push(p.id);
     });
 
-    // 1. PRÉ-CÁLCULO (VOLUME SEMANAL)
+    // 1. CÁLCULO DE MÉDIAS SEMANAIS (Base Line)
     const processTotalVolume: Record<number, number> = {};
     const processTotalHours: Record<number, number> = {};
 
@@ -99,7 +103,7 @@ export class AIScheduler {
         processTotalHours[proc.id] = weeklyHours;
     });
 
-    // 2. SIMULAÇÃO HORA A HORA
+    // 2. SIMULAÇÃO HORA A HORA COM SLA ENFORCEMENT
     const runningBacklogs: Record<number, number> = {};
     processes.forEach(p => runningBacklogs[p.id] = 0);
 
@@ -108,13 +112,13 @@ export class AIScheduler {
         
         hoursArray.forEach(h => {
             
-            // Monitor de Backlog Total de Outbound (Para o Teto de 130k)
-            let currentTotalOutboundBacklog = 0;
+            // Monitoramento de SLA Outbound (Cadeia completa)
+            let totalOutboundBacklog = 0;
             processes.forEach(p => {
-                if (p.type === 'Outbound') currentTotalOutboundBacklog += runningBacklogs[p.id];
+                if (p.type === 'Outbound') totalOutboundBacklog += runningBacklogs[p.id];
             });
 
-            // Monitor específico do Picking (para o PutAway ver)
+            // Backlog específico do Picking (para controle de fluxo)
             const pickingBacklog = pickingId ? runningBacklogs[pickingId] : 0;
 
             processes.forEach((proc, pIdx) => {
@@ -124,11 +128,12 @@ export class AIScheduler {
                 const isPicking = proc.id === pickingId;
                 const isSorting = sortingIds.includes(proc.id);
                 const isPacking = procName.includes('packing');
+                const isHandover = procName.includes('handover') || procName.includes('expedição') || procName.includes('last mile');
 
                 const settings = day.parentSettings[proc.id] || { split: 100 };
                 const splitRatio = settings.split / 100;
 
-                // --- 2.1 INPUT ---
+                // --- 2.1 CÁLCULO DE INPUT ---
                 let input = 0;
                 if (isReceiving) {
                     const remainingHours = 24 - day.shiftStart;
@@ -154,7 +159,7 @@ export class AIScheduler {
                     if (prevProc) input = outputsByProcess[prevProc.id][dIdx][h] * splitRatio;
                 }
 
-                // --- 2.2 INTELIGÊNCIA DE HC E REDISTRIBUIÇÃO ---
+                // --- 2.2 INTELIGÊNCIA DE HC COM SLA ---
                 const efficiencyVal = day.efficiencyMatrix[h] ?? 100;
                 const efficiencyFactor = efficiencyVal / 100;
                 const limitHc = this.getHcLimit(day, h);
@@ -168,60 +173,55 @@ export class AIScheduler {
                     suggestedHc = 0;
                 }
                 else if (isReceiving) {
-                    // Recebimento: Just in Time
                     if (proc.standardProductivity > 0) {
                         suggestedHc = Math.ceil(totalLoad / (proc.standardProductivity * efficiencyFactor));
                     }
                 }
                 else {
-                    // Outros processos: Cálculo Estratégico
+                    // A. HC Base (Cruzeiro)
                     let baseHc = 0;
                     if (processTotalHours[proc.id] > 0 && proc.standardProductivity > 0) {
                         baseHc = Math.ceil(processTotalVolume[proc.id] / (proc.standardProductivity * processTotalHours[proc.id]));
                     }
 
-                    // A. Fator de Risco (Aumenta HC se backlog alto)
-                    let riskFactor = 1.0;
-                    
-                    if (isPutAway) {
-                        // Teto INBOUND: 60k
-                        // Se estiver chegando perto de 60k, o PutAway TEM que trabalhar rápido para não travar a Doca
-                        if (currentBacklog > 45000) riskFactor = 1.3;
-                        if (currentBacklog > 55000) riskFactor = 2.0; // Pânico
-                    } else if (isPicking) {
-                        // Picking: Se tem muito backlog, acelera
-                        if (currentBacklog > 30000) riskFactor = 1.2;
-                        if (currentBacklog > 50000) riskFactor = 1.5;
-                    } else if (proc.type === 'Outbound') {
-                        // Teto GLOBAL OUTBOUND: 130k
-                        if (currentTotalOutboundBacklog > 110000) riskFactor = 1.3;
-                        if (currentTotalOutboundBacklog > 125000) riskFactor = 2.0;
-                    }
+                    // B. CÁLCULO DE HC PARA CUMPRIR SLA (NOVIDADE)
+                    let slaHc = 0;
 
-                    // B. Lógica de "Válvula" (Redistribuição)
-                    // Se eu sou o PutAway e o Picking está morrendo afogado, eu piso no freio
-                    // DESDE QUE eu (PutAway) não esteja morrendo também.
-                    if (isPutAway) {
-                        const pickingIsDrowning = pickingBacklog > 40000; // Picking com 40k+ de pendência
-                        const inboundIsSafe = currentBacklog < 50000; // Eu ainda tenho espaço até os 60k
-
-                        if (pickingIsDrowning && inboundIsSafe) {
-                            // REDUÇÃO ESTRATÉGICA:
-                            // Reduz o HC do PutAway para gerar menos output e não inflar o Picking
-                            riskFactor *= 0.5; 
+                    if (isPutAway && proc.standardProductivity > 0) {
+                        // SLA INBOUND: Deve limpar o backlog em SLA_INBOUND_HOURS (4h)
+                        // Fórmula: Carga_Atual / 4h = Qtd por hora necessária
+                        const neededThroughput = totalLoad / SLA_INBOUND_HOURS;
+                        slaHc = Math.ceil(neededThroughput / (proc.standardProductivity * efficiencyFactor));
+                    } 
+                    else if (proc.type === 'Outbound' && proc.standardProductivity > 0) {
+                        // SLA OUTBOUND: A cadeia toda deve limpar em 18h.
+                        // Aplicamos pressão proporcional nos processos finais (Packing/Handover)
+                        // para garantir que eles "puxem" o volume.
+                        
+                        // Se for Handover, ele é o goleiro. Se o backlog total está alto, ele precisa acelerar.
+                        if (isHandover || isPacking) {
+                            const neededThroughput = totalOutboundBacklog / SLA_OUTBOUND_HOURS;
+                            slaHc = Math.ceil(neededThroughput / (proc.standardProductivity * efficiencyFactor));
                         }
                     }
 
-                    // C. Deadline Domingo
-                    if (dIdx === 6 && h < 14) {
-                        const hoursLeft = 14 - h;
-                        const neededToZero = Math.ceil(totalLoad / (proc.standardProductivity * efficiencyFactor * Math.max(1, hoursLeft)));
-                        suggestedHc = Math.max(baseHc * riskFactor, neededToZero);
-                    } else {
-                        suggestedHc = Math.ceil(baseHc * riskFactor);
+                    // C. Definição do HC Sugerido (Maior valor vence)
+                    suggestedHc = Math.max(baseHc, slaHc);
+
+                    // D. Teto de Backlog (Segurança Adicional)
+                    if (isPutAway && currentBacklog > 50000) suggestedHc *= 1.2; // Acelera se passar de 50k
+                    if (totalOutboundBacklog > 120000 && proc.type === 'Outbound') suggestedHc *= 1.2;
+
+                    // E. Balanceamento (Válvula de Alívio)
+                    // Se o Picking está morrendo (Backlog > 40k), o PutAway tira o pé, 
+                    // DESDE QUE o PutAway esteja dentro do SLA seguro (Backlog < 30k)
+                    if (isPutAway) {
+                        if (pickingBacklog > 40000 && currentBacklog < 30000) {
+                            suggestedHc = Math.floor(suggestedHc * 0.7); // Reduz 30%
+                        }
                     }
 
-                    // D. Anti-Ociosidade
+                    // F. Anti-Ociosidade
                     const maxPossibleOutput = suggestedHc * proc.standardProductivity * efficiencyFactor;
                     if (maxPossibleOutput > totalLoad) {
                         suggestedHc = Math.ceil(totalLoad / (proc.standardProductivity * efficiencyFactor));
@@ -238,20 +238,10 @@ export class AIScheduler {
                 // --- 2.3 CALCULAR OUTPUT REAL ---
                 let finalCapacity = suggestedHc * proc.standardProductivity * efficiencyFactor;
                 
-                // LÓGICA DE TRAVA DE OUTPUT (SEGURAR NO BACKLOG)
-                // Se o PutAway tiver HC, mas o Picking estiver crítico, podemos artificialmente
-                // limitar o output do PutAway (fazer o operador trabalhar mais devagar ou pausar),
-                // forçando o backlog a ficar no PutAway.
-                if (isPutAway) {
-                     const pickingIsCritical = pickingBacklog > 50000;
-                     const inboundIsSafe = currentBacklog < 55000; // Limite de segurança antes dos 60k
-                     
-                     if (pickingIsCritical && inboundIsSafe) {
-                         // Trava o output do PutAway para enviar no máximo X peças por hora
-                         // Ex: Enviar só 2000 peças/h para dar fôlego ao Picking
-                         const throttleLimit = 2000; 
-                         finalCapacity = Math.min(finalCapacity, throttleLimit);
-                     }
+                // Válvula Física: Se Picking explodiu, Putaway trava fisicamente a saída
+                if (isPutAway && pickingBacklog > 50000) {
+                     // Limita output para não piorar o picking, mesmo tendo gente
+                     finalCapacity = Math.min(finalCapacity, 2500); 
                 }
 
                 const realOutput = Math.min(totalLoad, finalCapacity);
@@ -271,9 +261,9 @@ export class AIScheduler {
                     });
                 }
 
-            }); 
-        }); 
-    });
+            }); // Fim Processos
+        }); // Fim Horas
+    }); // Fim Dias
 
     return newHcMatrix;
   }
