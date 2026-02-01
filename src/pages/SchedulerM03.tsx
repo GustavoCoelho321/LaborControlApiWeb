@@ -1,6 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
 import { api } from '../Services/api';
-import { AIScheduler } from '../utils/AIScheduler';
 import { learningService } from '../Services/LearningService';
 import { 
   Save, Users, ArrowDownCircle, ArrowUpCircle, AlertTriangle, 
@@ -69,7 +68,18 @@ const DAYS_OF_WEEK = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado
 const LOW_EFFICIENCY_HOURS = [0, 1, 11, 12, 18, 19];
 const CACHE_KEY = 'labor_control_week_v16_m03';
 
-// --- MATRIZ DE CONSOLIDAÇÃO ---
+// --- CURVA DE CHEGADA (RECEIVING SHARE) ---
+const RECEIVING_SHARE_MATRIX: number[][] = [
+  [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6, 6, 9, 9, 7, 14, 20, 20, 9], // Seg
+  [4, 3, 5, 4, 5, 4, 4, 4, 5, 8, 6, 3, 1, 5, 4, 3, 6, 5, 5, 3, 3, 3, 6, 4], // Ter
+  [5, 3, 3, 5, 5, 5, 4, 5, 5, 3, 5, 3, 3, 5, 5, 5, 4, 4, 2, 3, 4, 4, 3, 3], // Qua
+  [5, 2, 2, 5, 5, 4, 4, 4, 5, 5, 5, 5, 2, 2, 5, 7, 6, 5, 4, 2, 3, 5, 5, 4], // Qui
+  [5, 2, 2, 5, 5, 4, 4, 4, 5, 5, 5, 5, 2, 2, 5, 7, 6, 5, 4, 2, 3, 5, 5, 4], // Sex
+  [4, 2, 2, 4, 4, 3, 3, 4, 5, 5, 6, 3, 3, 6, 7, 5, 6, 4, 3, 4, 3, 6, 6, 2], // Sab
+  [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  // Dom
+];
+
+// --- MATRIZ DE CONSOLIDAÇÃO (Picking -> Packing) ---
 const CONSOLIDATION_MATRIX: number[][] = [
   [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 70, 70, 70, 70, 70, 70, 167, 115, 106, 94],
   [65, 76, 61, 56, 57, 58, 59, 69, 62, 63, 64, 64, 64, 65, 67, 68, 69, 70, 71, 72, 74, 77, 78, 115],
@@ -185,14 +195,17 @@ export function SchedulerM03() {
     }
   }
 
-  // === TREINAMENTO DA IA (Envia para Tabela LearnedModels) ===
+  // === TREINAMENTO DA IA (Envia para AIModelController) ===
   const handleTrainAI = async () => {
     const currentDayName = DAYS_OF_WEEK[activeDayIndex]; 
     const dayData = weekData[activeDayIndex];
 
-    if (!confirm(`Calibrar IA com dados de ${currentDayName}? Isso salvará a inteligência na tabela de IA do banco.`)) return;
+    if (!confirm(`Deseja enviar os dados de ${currentDayName} para o Servidor ML.NET aprender?`)) return;
 
-    let trainedCount = 0;
+    let totalSamplesFound = 0;
+    let successCount = 0;
+
+    console.log("Iniciando varredura de processos...");
 
     const promises = processOrder.map(async (proc) => {
         const samples: any[] = [];
@@ -200,12 +213,11 @@ export function SchedulerM03() {
         
         hours.forEach(h => {
             const hcKey = `P-${proc.id}-${h}`;
-            const approvedHc = dayData.hcMatrix[hcKey] || 0;
-            const estimatedVol = dayData.volume / 24; 
+            const approvedHc = Number(dayData.hcMatrix[hcKey]) || 0;
             
             if (approvedHc > 0) {
                 samples.push({
-                    volume: estimatedVol,
+                    volume: dayData.volume / 24, 
                     hour: h,
                     approvedHc: approvedHc,
                     dayIndex: activeDayIndex,
@@ -215,42 +227,84 @@ export function SchedulerM03() {
         });
 
         if (samples.length > 0) {
-            // 1. Treina local
-            learningService.train(proc.id, samples);
-            trainedCount++;
-
-            // 2. Exporta o cérebro
-            const brainJson = learningService.getModelJson(proc.id);
-
-            // 3. Envia para o controller de IA (LearnedModels)
-            if (brainJson) {
-                try {
-                    await api.post('/aimodel', {
-                        processId: proc.id,
-                        modelJson: brainJson
-                    });
-                    console.log(`IA do processo ${proc.name} salva no banco.`);
-                } catch (e) {
-                    console.error("Erro ao salvar IA", e);
-                }
-            }
+            totalSamplesFound += samples.length;
+            const success = await learningService.train(proc.id, samples);
+            if (success) successCount++;
         }
     });
 
     await Promise.all(promises);
-    
-    if(trainedCount > 0) {
-        alert("IA Calibrada com sucesso e salva no Banco de Dados!");
+
+    if (totalSamplesFound === 0) {
+        alert("⚠️ ATENÇÃO: Não encontrei nenhum HC preenchido (> 0) neste dia.\n\nPreencha a coluna 'Diretos' na tabela antes de calibrar.");
+    } else if (successCount > 0) {
+        alert(`✅ Sucesso! Dados enviados para o servidor.\nProcessos Treinados: ${successCount}\nAmostras Totais: ${totalSamplesFound}`);
     } else {
-        alert("Nenhum dado de HC encontrado neste dia para calibrar.");
+        alert("❌ Erro ao enviar. Verifique o Console (F12) para ver o erro detalhado.");
     }
   };
 
-  // --- CRUD DE CENÁRIOS (Envia para Tabela SimulationScenarios) ---
+  // --- ESCALONAMENTO INTELIGENTE (CHAMA O BACKEND C#) ---
+  const handleSmartDistributeWeek = async () => {
+    if (!confirm(`O Servidor vai calcular o cenário OTIMIZADO (SLA + IA + Backlog Control). Continuar?`)) return;
+    
+    setLoading(true);
+
+    try {
+        const payload = {
+            weekData: weekData.map(d => ({
+                volume: d.volume,
+                shiftStart: d.shiftStart,
+                maxHcT1: d.maxHcT1,
+                maxHcT2: d.maxHcT2,
+                maxHcT3: d.maxHcT3,
+                efficiencyMatrix: d.efficiencyMatrix,
+                parentSettings: d.parentSettings
+            })),
+            processes: processOrder.map(p => ({
+                id: p.id,
+                name: p.name,
+                type: p.type,
+                standardProductivity: p.standardProductivity,
+                efficiency: p.efficiency ?? 1,
+                travelTime: p.travelTime ?? 0,
+                subprocesses: p.subprocesses?.map(s => ({
+                    id: s.id,
+                    standardProductivity: s.standardProductivity
+                })) || []
+            }))
+        };
+
+        const response = await api.post('/simulation/smart-distribute', payload);
+        const newHcMap = response.data; 
+
+        const newWeekData = weekData.map((day, dIdx) => {
+            const updatedHcMatrix = { ...day.hcMatrix };
+            Object.keys(newHcMap).forEach(key => {
+                const parts = key.split('-'); 
+                const dayIndexRef = parseInt(parts[3]);
+                if (dayIndexRef === dIdx) {
+                    const localKey = `${parts[0]}-${parts[1]}-${parts[2]}`;
+                    updatedHcMatrix[localKey] = newHcMap[key];
+                }
+            });
+            return { ...day, hcMatrix: updatedHcMatrix };
+        });
+        
+        setWeekData(newWeekData);
+        alert("✅ Cálculo Otimizado Concluído! O backlog foi controlado.");
+
+    } catch (error) {
+        console.error(error);
+        alert("Erro ao calcular no servidor.");
+    } finally {
+        setLoading(false);
+    }
+  };
+
+  // --- CRUD DE CENÁRIOS ---
   const handleSaveScenario = async () => {
     if (!scenarioName) return alert("Digite um nome.");
-    
-    // Salva o ESTADO DA TELA (não a IA)
     const jsonString = JSON.stringify({ weekData, processOrder });
 
     try {
@@ -261,22 +315,18 @@ export function SchedulerM03() {
             endDate: endDate,
             jsonData: jsonString
         };
-        
-        // MUDANÇA: Agora chama o endpoint de Simulação
         const response = await api.post('/simulation', payload);
-        
-        alert(`✅ Cenário salvo com sucesso!\nID Gerado: ${response.data.id}`);
+        alert(`✅ Cenário salvo na tabela SimulationScenarios!\nID: ${response.data.id}`);
         setIsSaveModalOpen(false);
         setScenarioName('');
     } catch (error) {
         console.error(error);
-        alert('Erro ao salvar cenário. Verifique se o backend (SimulationController) está rodando.');
+        alert('Erro ao salvar cenário.');
     }
   };
 
   const handleOpenLoadModal = async () => {
       try {
-          // MUDANÇA: Busca da tabela de Simulações
           const response = await api.get('/simulation');
           setSavedScenarios(response.data);
           setIsLoadModalOpen(true);
@@ -288,7 +338,6 @@ export function SchedulerM03() {
   const handleLoadScenario = async (id: number) => {
       if(!confirm("Carregar este cenário substituirá os dados atuais. Continuar?")) return;
       try {
-          // MUDANÇA: Carrega da tabela de Simulações
           const response = await api.get(`/simulation/${id}`);
           const { jsonData, startDate: sDate, endDate: eDate } = response.data;
           const parsedData = JSON.parse(jsonData);
@@ -307,7 +356,6 @@ export function SchedulerM03() {
   const handleDeleteScenario = async (id: number) => {
       if(!confirm("Tem certeza que deseja excluir?")) return;
       try {
-          // MUDANÇA: Deleta da tabela de Simulações
           await api.delete(`/simulation/${id}`);
           setSavedScenarios(prev => prev.filter(s => s.id !== id));
       } catch (error) {
@@ -318,7 +366,6 @@ export function SchedulerM03() {
   const handleImportWeeklyForecast = async () => {
     if (!startDate || !endDate) return alert("Selecione a semana de referência.");
     setImporting(true);
-    
     try {
         const datesInRange: string[] = [];
         let currentDate = new Date(startDate + 'T12:00:00'); 
@@ -458,11 +505,9 @@ export function SchedulerM03() {
           hoursArray.forEach((hour, hIdx) => {
              let input = 0;
              if (isReceiving) {
-                 if (hIdx < remainingHours) {
-                    input = dayData.volume / remainingHours;
-                 } else {
-                    input = 0; 
-                 }
+                 // --- MUDANÇA: Usa a matriz de Share ---
+                 const sharePercentage = RECEIVING_SHARE_MATRIX[dayIdx][hour];
+                 input = dayData.volume * (sharePercentage / 100);
              } 
              else if (isPicking) {
                  const prevProc = processOrder[idx - 1];
@@ -519,33 +564,6 @@ export function SchedulerM03() {
     });
     return { fullWeekResults, daysHours, daysPeakHc };
   }, [weekData, processOrder]);
-
-  const handleSmartDistributeWeek = () => {
-    if (!confirm(`A IA irá calcular o plano para M03. Continuar?`)) return;
-    const aiProcessInput = processOrder.map(p => ({
-      id: Number(p.id), name: p.name, type: p.type, standardProductivity: p.standardProductivity,
-      efficiency: p.efficiency, travelTime: p.travelTime,
-      subprocesses: p.subprocesses ? p.subprocesses.map(s => ({ 
-          id: s.id, standardProductivity: s.standardProductivity, efficiency: s.efficiency, travelTime: s.travelTime 
-      })) : []
-    }));
-    
-    const newHcMap = AIScheduler.calculateSchedule(weekData, aiProcessInput);
-    
-    const newWeekData = weekData.map((day, dIdx) => {
-        const updatedHcMatrix = { ...day.hcMatrix };
-        Object.keys(newHcMap).forEach(key => {
-            const parts = key.split('-'); 
-            const dayIndexRef = parseInt(parts[3]);
-            if (dayIndexRef === dIdx) {
-                const localKey = `${parts[0]}-${parts[1]}-${parts[2]}`;
-                updatedHcMatrix[localKey] = newHcMap[key];
-            }
-        });
-        return { ...day, hcMatrix: updatedHcMatrix };
-    });
-    setWeekData(newWeekData);
-  };
 
   const activeResults = weekSimulation.fullWeekResults[activeDayIndex] || {};
   const activeHours = weekSimulation.daysHours[activeDayIndex] || [];
