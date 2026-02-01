@@ -1,51 +1,25 @@
-import { useState, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { 
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, 
-  Line, Area, AreaChart, ComposedChart, PieChart, Pie, Cell, Radar, RadarChart, PolarGrid, 
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
+  Line, Area, AreaChart, ComposedChart, Radar, RadarChart, PolarGrid, 
   PolarAngleAxis, PolarRadiusAxis
 } from 'recharts';
 import { 
-  LayoutDashboard, TrendingUp, TrendingDown, Users, Package, 
-  AlertTriangle, ArrowRight, Activity, Clock, CalendarRange, CloudDownload,
-  Warehouse, ArrowDownCircle, Construction, CheckCircle2, Zap, BrainCircuit
+  LayoutDashboard, TrendingUp, Users, Package, 
+  AlertTriangle, Clock, CalendarRange, Warehouse, ArrowDownCircle, 
+  Construction, CheckCircle2, Zap, BrainCircuit, Activity, Info // <--- Adicionado aqui
 } from 'lucide-react';
 import { api } from '../Services/api';
-// IMPORT CORRIGIDO:
 import { AIScheduler, type AIProcessInput, type AIDayData } from '../utils/AIScheduler';
 
 // --- CONSTANTES ---
-const DAYS = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sab", "Dom"];
+const DAYS = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"];
 const LOW_EFFICIENCY_HOURS = [0, 1, 11, 12, 18, 19];
-
-const CONSOLIDATION_MATRIX: number[][] = [
-  [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 70, 70, 70, 70, 70, 70, 167, 115, 106, 94],
-  [65, 76, 61, 56, 57, 58, 59, 69, 62, 63, 64, 64, 64, 65, 67, 68, 69, 70, 71, 72, 74, 77, 78, 115],
-  [123, 119, 120, 116, 106, 99, 95, 92, 93, 93, 95, 95, 97, 98, 100, 102, 103, 105, 106, 107, 109, 112, 116, 120],
-  [89, 93, 93, 94, 93, 94, 95, 96, 99, 102, 104, 108, 108, 109, 111, 113, 116, 118, 118, 120, 122, 123, 123, 121],
-  [89, 92, 92, 94, 96, 97, 98, 101, 102, 102, 103, 103, 112, 104, 105, 107, 109, 111, 112, 113, 115, 116, 114, 112],
-  [88, 91, 96, 96, 98, 95, 94, 98, 100, 101, 101, 102, 102, 103, 105, 108, 110, 111, 112, 113, 115, 115, 115, 181],
-  [125, 126, 124, 127, 137, 138, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-];
-
-// Tipos para Gráficos
-interface ChartData {
-  hour: string;
-  input: number;
-  output: number;
-  backlog: number;
-  uph: number;
-  meta: number;
-}
-
-interface DistributionData {
-  name: string;
-  value: number;
-  color: string;
-}
 
 export function Dashboard() {
   const [activeTab, setActiveTab] = useState<'3P' | 'RC'>('3P');
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
   const [loading, setLoading] = useState(false);
   
   // --- ESTADOS DE DADOS ---
@@ -53,9 +27,30 @@ export function Dashboard() {
   const [hourlyTrend, setHourlyTrend] = useState<any[]>([]); 
   const [processEfficiency, setProcessEfficiency] = useState<any[]>([]);
   const [insights, setInsights] = useState<{type: string, title: string, desc: string}[]>([]);
-  const [kpis, setKpis] = useState({ totalVol: 0, peakBacklog: 0, avgHc: 0, completionRate: 0 });
+  const [kpis, setKpis] = useState({ totalVol: 0, peakBacklog: 0, avgHc: 0, slaAdherence: 0 });
 
-  // Helper para gerar matriz sem erro de spread
+  // Inicializa com a semana atual
+  useEffect(() => {
+    const today = new Date();
+    handleDateSelection(today.toISOString().split('T')[0]);
+  }, []);
+
+  const handleDateSelection = (dateVal: string) => {
+    if(!dateVal) return;
+    const date = new Date(dateVal + 'T12:00:00'); 
+    const day = date.getDay(); 
+    const diff = date.getDate() - day + (day === 0 ? -6 : 1); // Ajusta para Segunda
+    
+    const monday = new Date(date);
+    monday.setDate(diff);
+
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+
+    setStartDate(monday.toISOString().split('T')[0]);
+    setEndDate(sunday.toISOString().split('T')[0]);
+  };
+
   const generateEfficiencyMatrix = (): Record<number, number> => {
     const matrix: Record<number, number> = {};
     for (let i = 0; i < 24; i++) {
@@ -64,35 +59,29 @@ export function Dashboard() {
     return matrix;
   };
 
-  // --- ENGINE DE SIMULAÇÃO SEMANAL ---
   const runSimulation = async () => {
-    if (!selectedDate) return alert("Selecione a data de início da semana.");
+    if (!startDate) return;
     setLoading(true);
 
     try {
-      // 1. Setup de Datas (Segunda a Domingo)
-      const start = new Date(selectedDate + 'T12:00:00');
-      const day = start.getDay();
-      const diff = start.getDate() - day + (day === 0 ? -6 : 1);
-      const monday = new Date(start.setDate(diff));
-      
+      const start = new Date(startDate + 'T12:00:00');
       const weekDates: string[] = [];
       for(let i=0; i<7; i++) {
-        const d = new Date(monday);
-        d.setDate(monday.getDate() + i);
+        const d = new Date(start);
+        d.setDate(start.getDate() + i);
         weekDates.push(d.toISOString().split('T')[0]);
       }
 
-      // 2. Busca Dados
+      // Busca Processos e Forecast
       const [procResp, fcResp] = await Promise.all([
         api.get('/processes'),
-        api.get('/forecast/monthly', { params: { year: monday.getFullYear(), month: monday.getMonth()+1 } }) 
+        api.get('/forecast/monthly', { params: { year: start.getFullYear(), month: start.getMonth()+1 } }) 
       ]);
 
       const processes = procResp.data.filter((p: any) => !p.warehouse || p.warehouse === 'M03' || p.warehouse === 'All');
       const allForecasts = fcResp.data?.data || [];
 
-      // 3. Monta Cenário para IA
+      // Monta Input
       const weekInput: AIDayData[] = weekDates.map((dateStr, idx) => {
         const fc = allForecasts.find((f: any) => f.date.startsWith(dateStr));
         const vol = fc ? fc.inboundM03 * 1000 : 0; 
@@ -104,36 +93,43 @@ export function Dashboard() {
             limitInbound: 60000,
             limitOutbound: 130000,
             maxHcT1: 0, maxHcT2: 0, maxHcT3: 0,
-            // CORREÇÃO: Usar função helper
             efficiencyMatrix: generateEfficiencyMatrix(),
             parentSettings: {} 
         };
       });
 
       const aiInput: AIProcessInput[] = processes.map((p: any) => ({
-        id: p.id, name: p.name, type: p.type, standardProductivity: p.standardProductivity,
-        subprocesses: p.subprocesses || []
+        id: p.id, 
+        name: p.name, 
+        type: p.type, 
+        standardProductivity: p.standardProductivity,
+        efficiency: p.efficiency, 
+        travelTime: p.travelTime, 
+        subprocesses: p.subprocesses ? p.subprocesses.map((s:any) => ({
+            id: s.id, 
+            standardProductivity: s.standardProductivity,
+            efficiency: s.efficiency,
+            travelTime: s.travelTime
+        })) : []
       }));
 
-      // 4. Executa IA
+      // Executa Engine
       const hcMatrix = AIScheduler.calculateSchedule(weekInput, aiInput);
 
-      // 5. Pós-Processamento
+      // Pós-Processamento para Gráficos
       const weeklyStats = [];
       let totalWeekVol = 0;
       let totalHcHours = 0;
-      let criticalDayIndex = 0;
       let maxBacklogFound = 0;
+      let totalSlaBreach = 0;
 
       const procEffMap: Record<string, {target: number, realized: number}> = {};
 
+      // Simulação Simplificada para Extrair KPIs
       for (let d = 0; d < 7; d++) {
-        let dailyInput = 0;
-        let dailyOutput = 0;
-        let dailyHc = 0;
-
-        dailyInput = weekInput[d].volume;
+        let dailyInput = weekInput[d].volume;
         totalWeekVol += dailyInput;
+        let dailyHc = 0;
 
         Object.keys(hcMatrix).forEach(key => {
             const [type, id, hour, dayIdx] = key.split('-');
@@ -141,72 +137,69 @@ export function Dashboard() {
                 const hc = hcMatrix[key];
                 dailyHc += hc;
                 
+                // Acumula para radar
                 const proc = processes.find((p:any) => p.id === parseInt(id));
                 if (proc) {
                     if (!procEffMap[proc.name]) procEffMap[proc.name] = {target: 0, realized: 0};
+                    const targetProd = proc.standardProductivity * (proc.efficiency || 1);
                     procEffMap[proc.name].target += (hc * proc.standardProductivity); 
-                    const effHour = weekInput[d].efficiencyMatrix[parseInt(hour)] / 100;
-                    procEffMap[proc.name].realized += (hc * proc.standardProductivity * effHour);
+                    procEffMap[proc.name].realized += (hc * targetProd);
                 }
             }
         });
 
-        const dayCapacity = Object.values(procEffMap).reduce((acc, curr) => acc + curr.realized, 0) / 7; 
-        dailyOutput = Math.min(dailyInput, dayCapacity); 
-        
+        // Estimativa de Saída
+        const dailyCapacity = Object.values(procEffMap).reduce((acc, curr) => acc + curr.realized, 0) / (d + 1) * 24; 
+        const dailyOutput = Math.min(dailyInput * 1.05, dailyCapacity); 
+        const backlog = Math.max(0, dailyInput - dailyOutput);
+
         weeklyStats.push({
             day: DAYS[d],
             volume: Math.round(dailyInput),
-            capacity: Math.round(dailyOutput * 1.1),
+            capacity: Math.round(dailyCapacity / 7), 
+            backlog: Math.round(backlog),
             hc: Math.round(dailyHc / 24)
         });
 
-        if (dailyInput > maxBacklogFound) {
-            maxBacklogFound = dailyInput;
-            criticalDayIndex = d;
-        }
+        if (backlog > maxBacklogFound) maxBacklogFound = backlog;
+        if (backlog > 5000) totalSlaBreach++; 
         totalHcHours += dailyHc;
       }
 
       const radarData = Object.entries(procEffMap).map(([name, data]) => ({
         subject: name,
-        A: 100,
-        B: Math.min(100, Math.round((data.realized / data.target) * 100)) || 0,
+        A: 100, 
+        B: Math.min(120, Math.round((data.realized / data.target) * 100)) || 0,
         fullMark: 100
       })).slice(0, 6);
 
-      // Simulação do Dia Crítico
+      // Simulação Horária do Dia de Pico
       const criticalDayData = [];
-      let currentBl = 15000;
+      const peakVol = Math.max(...weekInput.map(w => w.volume));
+      let currentBl = 5000;
       for(let h=0; h<24; h++) {
-        const vol = (weekInput[criticalDayIndex].volume / 14) * (h > 6 && h < 20 ? 1 : 0.2); 
-        const cap = 4000; 
-        currentBl = Math.max(0, currentBl + vol - cap);
-        criticalDayData.push({
-            hour: `${h}h`,
-            backlog: Math.round(currentBl),
-            entrada: Math.round(vol)
-        });
+         const hourVol = (peakVol / 18) * (h > 6 && h < 22 ? 1.2 : 0.1);
+         const hourCap = (totalHcHours / (7*24)) * 100;
+         currentBl = Math.max(0, currentBl + hourVol - hourCap);
+         criticalDayData.push({
+             hour: `${h}h`,
+             backlog: Math.round(currentBl),
+             entrada: Math.round(hourVol),
+             saida: Math.round(hourCap)
+         });
       }
 
+      // Insights Inteligentes
       const newInsights = [];
-      newInsights.push({
-        type: 'info', 
-        title: 'Dia de Pico', 
-        desc: `${DAYS[criticalDayIndex]} terá o maior volume (${(maxBacklogFound/1000).toFixed(1)}k). A IA alocou +15% de HC.`
-      });
-      if (totalWeekVol > 300000) {
-        newInsights.push({
-            type: 'warning', 
-            title: 'Sobrecarga Semanal', 
-            desc: 'Volume total acima de 300k. Considere turno extra no Sábado.'
-        });
+      if (maxBacklogFound > 20000) {
+        newInsights.push({ type: 'warning', title: 'Risco de SLA', desc: 'Backlog projetado acima de 20k na Terça-feira. Recomendado turno extra.' });
       } else {
-        newInsights.push({
-            type: 'success', 
-            title: 'Semana Controlada', 
-            desc: 'Capacidade instalada suficiente para zerar backlog até Domingo.'
-        });
+        newInsights.push({ type: 'success', title: 'Operação Estável', desc: 'Capacidade suficiente para absorver picos da semana.' });
+      }
+      
+      const avgEfficiency = radarData.reduce((acc, r) => acc + r.B, 0) / radarData.length;
+      if (avgEfficiency < 85) {
+        newInsights.push({ type: 'info', title: 'Oportunidade', desc: `Eficiência média de ${avgEfficiency.toFixed(0)}%. Revise os tempos de deslocamento.` });
       }
 
       setWeeklyData(weeklyStats);
@@ -215,9 +208,9 @@ export function Dashboard() {
       setInsights(newInsights);
       setKpis({
         totalVol: totalWeekVol,
-        peakBacklog: Math.max(...criticalDayData.map(d=>d.backlog)),
+        peakBacklog: maxBacklogFound,
         avgHc: Math.round(totalHcHours / (24*7)),
-        completionRate: 98.5
+        slaAdherence: Math.round(100 - (totalSlaBreach/7 * 100))
       });
 
     } catch (error) {
@@ -229,32 +222,41 @@ export function Dashboard() {
   };
 
   return (
+    <>
+    <style>{`
+        @keyframes fade-in-up { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+        .animate-fade-in-up { animation: fade-in-up 0.6s ease-out forwards; }
+    `}</style>
+
     <div className="space-y-8 animate-fade-in-up pb-32">
       
       {/* --- HEADER --- */}
-      <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-6 border-b border-gray-200 pb-6">
-        <div>
-          <h1 className="text-3xl font-black text-gray-800 flex items-center gap-3">
-            <LayoutDashboard size={32} className="text-dhl-red" />
-            Control Tower <span className="text-dhl-red font-light">| Executive View</span>
-          </h1>
-          <p className="text-gray-500 mt-2 flex items-center gap-2">
-            <BrainCircuit size={16} className="text-purple-600"/>
-            Análise Estratégica baseada em Inteligência Artificial e Restrições de Capacidade.
-          </p>
-        </div>
+      <div className="bg-white rounded-3xl p-1 shadow-sm border border-gray-100 relative overflow-hidden">
+        <div className="absolute top-0 right-0 w-64 h-64 bg-dhl-yellow/10 rounded-full blur-3xl -mr-16 -mt-16 pointer-events-none"></div>
+        <div className="bg-white rounded-2xl p-6 relative z-10 flex flex-col xl:flex-row xl:items-center justify-between gap-6">
+            <div>
+              <h1 className="text-3xl font-black text-gray-800 flex items-center gap-3">
+                <LayoutDashboard size={32} className="text-dhl-red" />
+                Control Tower <span className="text-dhl-red font-light">| Executive View</span>
+              </h1>
+              <p className="text-gray-500 mt-2 flex items-center gap-2">
+                <BrainCircuit size={16} className="text-purple-600"/>
+                Simulação baseada em IA com restrições de Eficiência e Deslocamento.
+              </p>
+            </div>
 
-        <div className="flex items-center gap-2 bg-gray-100 p-1.5 rounded-xl">
-            {['3P', 'RC'].map(tab => (
-                <button
-                    key={tab}
-                    onClick={() => setActiveTab(tab as any)}
-                    className={`px-6 py-2.5 rounded-lg text-sm font-bold transition-all flex items-center gap-2 ${activeTab === tab ? 'bg-white text-gray-900 shadow-md transform scale-105' : 'text-gray-400 hover:text-gray-600'}`}
-                >
-                    {tab === '3P' ? <Warehouse size={16}/> : <ArrowDownCircle size={16}/>}
-                    {tab === '3P' ? 'Operação 3P (M03)' : 'Recebimento RC'}
-                </button>
-            ))}
+            <div className="flex items-center gap-2 bg-gray-50 p-1.5 rounded-xl border border-gray-200">
+                {['3P', 'RC'].map(tab => (
+                    <button
+                        key={tab}
+                        onClick={() => setActiveTab(tab as any)}
+                        className={`px-6 py-2.5 rounded-lg text-sm font-bold transition-all flex items-center gap-2 ${activeTab === tab ? 'bg-white text-gray-900 shadow-md transform scale-105' : 'text-gray-400 hover:text-gray-600'}`}
+                    >
+                        {tab === '3P' ? <Warehouse size={16}/> : <ArrowDownCircle size={16}/>}
+                        {tab === '3P' ? 'Operação 3P (M03)' : 'Recebimento RC'}
+                    </button>
+                ))}
+            </div>
         </div>
       </div>
 
@@ -271,16 +273,30 @@ export function Dashboard() {
             {/* --- CONTROLES --- */}
             <div className="bg-white p-5 rounded-2xl border border-gray-200 shadow-sm flex flex-col md:flex-row gap-4 items-center justify-between">
                 <div className="flex items-center gap-4 w-full md:w-auto">
-                    <div className="flex flex-col w-full md:w-64">
-                        <span className="text-[10px] font-bold text-gray-400 uppercase mb-1 ml-1">Semana de Referência</span>
-                        <div className="flex items-center gap-3 bg-gray-50 px-4 py-3 rounded-xl border border-gray-200 focus-within:border-dhl-red focus-within:ring-2 focus-within:ring-dhl-red/20 transition-all">
-                            <CalendarRange size={20} className="text-gray-400" />
-                            <input 
-                                type="date" 
-                                className="bg-transparent font-bold text-gray-700 outline-none w-full"
-                                value={selectedDate}
-                                onChange={e => setSelectedDate(e.target.value)}
-                            />
+                    <div className="flex items-center gap-4 bg-gray-50 px-4 py-3 rounded-xl border border-gray-200">
+                        <div className="flex flex-col">
+                            <span className="text-[10px] font-bold text-gray-400 uppercase mb-1">De (Segunda)</span>
+                            <div className="flex items-center gap-2">
+                                <CalendarRange size={16} className="text-gray-400" />
+                                <input 
+                                    type="date" 
+                                    className="bg-transparent font-bold text-gray-700 outline-none text-sm"
+                                    value={startDate}
+                                    onChange={e => handleDateSelection(e.target.value)}
+                                />
+                            </div>
+                        </div>
+                        <div className="h-8 w-px bg-gray-300"></div>
+                        <div className="flex flex-col">
+                            <span className="text-[10px] font-bold text-gray-400 uppercase mb-1">Até (Domingo)</span>
+                            <div className="flex items-center gap-2">
+                                <input 
+                                    type="date" 
+                                    className="bg-transparent font-bold text-gray-500 outline-none text-sm cursor-not-allowed"
+                                    value={endDate}
+                                    disabled
+                                />
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -290,31 +306,31 @@ export function Dashboard() {
                     className="w-full md:w-auto px-8 py-4 bg-gradient-to-r from-dhl-red to-red-700 text-white font-bold rounded-xl shadow-lg shadow-red-200 flex items-center justify-center gap-3 hover:scale-105 active:scale-95 transition-all disabled:opacity-70 disabled:cursor-not-allowed"
                 >
                     {loading ? <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div> : <Zap size={20} fill="white" />}
-                    {loading ? 'Processando IA...' : 'Gerar Análise Semanal'}
+                    {loading ? 'Simulando Cenários...' : 'Atualizar Dashboard'}
                 </button>
             </div>
 
             {weeklyData.length > 0 && (
                 <div className="space-y-6 animate-fade-in-up">
                     
-                    {/* 1. BIG NUMBERS */}
+                    {/* 1. KPI CARDS */}
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                        <KpiCard title="Volume Semanal" value={(kpis.totalVol/1000).toFixed(1) + 'k'} icon={<Package/>} color="blue" sub="Projetado" />
-                        <KpiCard title="Pico de Backlog" value={(kpis.peakBacklog/1000).toFixed(1) + 'k'} icon={<AlertTriangle/>} color="orange" sub="Terça-feira" />
-                        <KpiCard title="Headcount Médio" value={kpis.avgHc} icon={<Users/>} color="purple" sub="Pessoas/Turno" />
-                        <KpiCard title="Taxa de Serviço" value={kpis.completionRate + '%'} icon={<CheckCircle2/>} color="green" sub="On Time" />
+                        <KpiCard title="Volume Projetado" value={(kpis.totalVol/1000).toFixed(1) + 'k'} icon={<Package/>} color="blue" sub="Unidades Semana" />
+                        <KpiCard title="Pico de Backlog" value={(kpis.peakBacklog/1000).toFixed(1) + 'k'} icon={<AlertTriangle/>} color="orange" sub="Risco Operacional" />
+                        <KpiCard title="HC Médio / Turno" value={kpis.avgHc} icon={<Users/>} color="purple" sub="Recursos Necessários" />
+                        <KpiCard title="Aderência SLA" value={kpis.slaAdherence + '%'} icon={<CheckCircle2/>} color={kpis.slaAdherence > 95 ? 'green' : 'red'} sub="Meta: >98%" />
                     </div>
 
                     {/* 2. INSIGHTS IA */}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         {insights.map((ins, i) => (
-                            <div key={i} className={`p-4 rounded-xl border flex items-start gap-4 shadow-sm ${ins.type === 'info' ? 'bg-blue-50 border-blue-100' : ins.type === 'warning' ? 'bg-orange-50 border-orange-100' : 'bg-green-50 border-green-100'}`}>
-                                <div className={`p-2 rounded-lg bg-white shadow-sm ${ins.type === 'info' ? 'text-blue-500' : ins.type === 'warning' ? 'text-orange-500' : 'text-green-500'}`}>
+                            <div key={i} className={`p-4 rounded-xl border-l-4 flex items-start gap-4 shadow-sm bg-white ${ins.type === 'info' ? 'border-l-blue-500' : ins.type === 'warning' ? 'border-l-orange-500' : 'border-l-green-500'}`}>
+                                <div className={`p-2 rounded-lg bg-gray-50 ${ins.type === 'info' ? 'text-blue-500' : ins.type === 'warning' ? 'text-orange-500' : 'text-green-500'}`}>
                                     <BrainCircuit size={20} />
                                 </div>
                                 <div>
-                                    <h4 className={`font-bold text-sm ${ins.type === 'info' ? 'text-blue-700' : ins.type === 'warning' ? 'text-orange-700' : 'text-green-700'}`}>{ins.title}</h4>
-                                    <p className="text-xs text-gray-600 mt-1 leading-relaxed">{ins.desc}</p>
+                                    <h4 className="font-bold text-sm text-gray-800">{ins.title}</h4>
+                                    <p className="text-xs text-gray-500 mt-1 leading-relaxed">{ins.desc}</p>
                                 </div>
                             </div>
                         ))}
@@ -323,31 +339,34 @@ export function Dashboard() {
                     {/* 3. GRÁFICOS PRINCIPAIS */}
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                         
-                        {/* GRÁFICO DE BARRAS SEMANAL (Volume vs Capacidade) */}
+                        {/* VOLUME vs CAPACIDADE (Composed Chart) */}
                         <div className="lg:col-span-2 bg-white p-6 rounded-2xl border border-gray-200 shadow-sm">
                             <div className="flex justify-between items-center mb-6">
                                 <div>
                                     <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
                                         <TrendingUp className="text-dhl-red" size={20}/>
-                                        Balanço de Carga Semanal
+                                        Planejamento Semanal
                                     </h3>
-                                    <p className="text-xs text-gray-400">Comparativo Volume de Entrada vs Capacidade de Saída</p>
+                                    <p className="text-xs text-gray-400">Entrada vs Saída vs Acúmulo</p>
                                 </div>
                                 <div className="flex gap-4 text-xs font-bold bg-gray-50 p-2 rounded-lg">
-                                    <div className="flex items-center gap-1"><div className="w-3 h-3 rounded-full bg-blue-500"></div> Volume</div>
-                                    <div className="flex items-center gap-1"><div className="w-3 h-3 rounded-full bg-green-500"></div> Capacidade</div>
+                                    <div className="flex items-center gap-1"><div className="w-3 h-3 rounded bg-blue-500"></div> Volume</div>
+                                    <div className="flex items-center gap-1"><div className="w-3 h-3 rounded bg-green-500"></div> Capacidade</div>
+                                    <div className="flex items-center gap-1"><div className="w-3 h-3 rounded bg-orange-400"></div> Backlog</div>
                                 </div>
                             </div>
-                            <div className="h-[300px]">
+                            <div className="h-[320px]">
                                 <ResponsiveContainer width="100%" height="100%">
-                                    <BarChart data={weeklyData} barGap={0}>
+                                    <ComposedChart data={weeklyData}>
                                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
                                         <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{fill: '#9ca3af', fontSize: 12, fontWeight: 'bold'}} dy={10} />
-                                        <YAxis axisLine={false} tickLine={false} tick={{fill: '#9ca3af', fontSize: 11}} />
+                                        <YAxis yAxisId="left" axisLine={false} tickLine={false} tick={{fill: '#9ca3af', fontSize: 11}} />
+                                        <YAxis yAxisId="right" orientation="right" hide />
                                         <Tooltip cursor={{fill: '#f9fafb'}} contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)'}} />
-                                        <Bar dataKey="volume" fill="#3b82f6" radius={[4, 4, 0, 0]} barSize={20} />
-                                        <Bar dataKey="capacity" fill="#22c55e" radius={[4, 4, 0, 0]} barSize={20} />
-                                    </BarChart>
+                                        <Bar yAxisId="left" dataKey="volume" fill="#3b82f6" radius={[4, 4, 0, 0]} barSize={20} />
+                                        <Bar yAxisId="left" dataKey="capacity" fill="#22c55e" radius={[4, 4, 0, 0]} barSize={20} />
+                                        <Area yAxisId="right" type="monotone" dataKey="backlog" fill="#fb923c" stroke="#f97316" fillOpacity={0.2} />
+                                    </ComposedChart>
                                 </ResponsiveContainer>
                             </div>
                         </div>
@@ -356,9 +375,9 @@ export function Dashboard() {
                         <div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm flex flex-col">
                             <h3 className="text-lg font-bold text-gray-800 mb-2 flex items-center gap-2">
                                 <Activity className="text-purple-500" size={20}/>
-                                Performance por Processo
+                                Eficiência Operacional
                             </h3>
-                            <p className="text-xs text-gray-400 mb-4">Aderência à meta de produtividade (%)</p>
+                            <p className="text-xs text-gray-400 mb-4">Meta vs Realizado (Impacto de Deslocamento)</p>
                             
                             <div className="flex-1 min-h-[250px] relative">
                                 <ResponsiveContainer width="100%" height="100%">
@@ -366,7 +385,7 @@ export function Dashboard() {
                                         <PolarGrid stroke="#e5e7eb" />
                                         <PolarAngleAxis dataKey="subject" tick={{fill: '#6b7280', fontSize: 10, fontWeight: 'bold'}} />
                                         <PolarRadiusAxis angle={30} domain={[0, 120]} tick={false} axisLine={false} />
-                                        <Radar name="Realizado" dataKey="B" stroke="#8b5cf6" strokeWidth={2} fill="#8b5cf6" fillOpacity={0.3} />
+                                        <Radar name="Real" dataKey="B" stroke="#8b5cf6" strokeWidth={2} fill="#8b5cf6" fillOpacity={0.3} />
                                         <Radar name="Meta" dataKey="A" stroke="#d1d5db" strokeWidth={1} fill="transparent" strokeDasharray="4 4" />
                                         <Tooltip />
                                     </RadarChart>
@@ -381,10 +400,10 @@ export function Dashboard() {
                         <div className="flex justify-between items-center mb-6">
                             <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
                                 <Clock className="text-orange-500" size={20}/>
-                                Análise do Dia Crítico (Fluxo Horário)
+                                Comportamento no Pico (Simulação Horária)
                             </h3>
-                            <span className="text-xs font-bold text-orange-600 bg-orange-50 px-3 py-1 rounded-full animate-pulse">
-                                Foco: Terça-feira
+                            <span className="text-xs font-bold text-orange-600 bg-orange-50 px-3 py-1 rounded-full animate-pulse border border-orange-100">
+                                Análise de Gargalo
                             </span>
                         </div>
                         <div className="h-[250px]">
@@ -395,13 +414,18 @@ export function Dashboard() {
                                             <stop offset="5%" stopColor="#f97316" stopOpacity={0.3}/>
                                             <stop offset="95%" stopColor="#f97316" stopOpacity={0}/>
                                         </linearGradient>
+                                        <linearGradient id="colorEntrada" x1="0" y1="0" x2="0" y2="1">
+                                            <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.1}/>
+                                            <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
+                                        </linearGradient>
                                     </defs>
                                     <XAxis dataKey="hour" axisLine={false} tickLine={false} tick={{fontSize: 10, fill: '#9ca3af'}} />
                                     <YAxis hide />
                                     <CartesianGrid vertical={false} stroke="#f3f4f6" strokeDasharray="3 3" />
-                                    <Tooltip />
-                                    <Area type="monotone" dataKey="backlog" stroke="#f97316" strokeWidth={3} fillOpacity={1} fill="url(#colorBacklog)" />
-                                    <Line type="monotone" dataKey="entrada" stroke="#3b82f6" strokeWidth={2} dot={false} strokeDasharray="5 5" />
+                                    <Tooltip contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)'}} />
+                                    <Area type="monotone" dataKey="backlog" stroke="#f97316" strokeWidth={2} fillOpacity={1} fill="url(#colorBacklog)" name="Acúmulo" />
+                                    <Area type="monotone" dataKey="entrada" stroke="#3b82f6" strokeWidth={2} fillOpacity={1} fill="url(#colorEntrada)" name="Entrada" />
+                                    <Line type="monotone" dataKey="saida" stroke="#22c55e" strokeWidth={2} dot={false} strokeDasharray="5 5" name="Capacidade" />
                                 </AreaChart>
                             </ResponsiveContainer>
                         </div>
@@ -412,34 +436,36 @@ export function Dashboard() {
 
             {!loading && weeklyData.length === 0 && (
                 <div className="flex flex-col items-center justify-center py-20 text-center">
-                    <div className="w-20 h-20 bg-gray-50 rounded-full flex items-center justify-center mb-4">
-                        <LayoutDashboard size={32} className="text-gray-300" />
+                    <div className="w-24 h-24 bg-gray-50 rounded-full flex items-center justify-center mb-6 animate-bounce">
+                        <LayoutDashboard size={40} className="text-gray-300" />
                     </div>
-                    <h3 className="text-xl font-bold text-gray-400">Aguardando Dados</h3>
-                    <p className="text-gray-400 max-w-xs mx-auto mt-2">Selecione uma semana e importe os dados para que a IA gere a estratégia.</p>
+                    <h3 className="text-xl font-bold text-gray-800">Pronto para Simular</h3>
+                    <p className="text-gray-500 max-w-sm mx-auto mt-2">Selecione uma semana e clique em "Gerar Análise" para ver as projeções da Inteligência Artificial.</p>
                 </div>
             )}
         </>
       )}
     </div>
+    </>
   );
 }
 
-// Componente de Card KPI Reutilizável
+// Componente de Card KPI
 function KpiCard({ title, value, icon, color, sub }: any) {
     const colorMap: any = {
-        blue: 'text-blue-600 bg-blue-50',
-        orange: 'text-orange-600 bg-orange-50',
-        purple: 'text-purple-600 bg-purple-50',
-        green: 'text-green-600 bg-green-50',
+        blue: 'text-blue-600 bg-blue-50 border-blue-100',
+        orange: 'text-orange-600 bg-orange-50 border-orange-100',
+        purple: 'text-purple-600 bg-purple-50 border-purple-100',
+        green: 'text-green-600 bg-green-50 border-green-100',
+        red: 'text-red-600 bg-red-50 border-red-100',
     };
     
     return (
-        <div className="bg-white p-5 rounded-2xl border border-gray-200 shadow-sm flex items-start justify-between hover:shadow-md transition-shadow">
+        <div className={`bg-white p-5 rounded-2xl border-b-4 shadow-sm flex items-start justify-between hover:shadow-md transition-all group ${colorMap[color].replace('bg-', 'border-b-')}`}>
             <div>
-                <p className="text-xs font-bold text-gray-400 uppercase tracking-wide">{title}</p>
+                <p className="text-xs font-bold text-gray-400 uppercase tracking-wide group-hover:text-gray-600 transition-colors">{title}</p>
                 <h3 className="text-3xl font-black text-gray-800 mt-1">{value}</h3>
-                {sub && <p className="text-[10px] font-bold text-gray-400 mt-1 bg-gray-50 w-fit px-2 py-0.5 rounded">{sub}</p>}
+                {sub && <div className="flex items-center gap-1 mt-2"><Info size={12} className="text-gray-300"/><p className="text-[10px] font-bold text-gray-400">{sub}</p></div>}
             </div>
             <div className={`p-3 rounded-xl ${colorMap[color]}`}>
                 {icon}
