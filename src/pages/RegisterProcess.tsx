@@ -37,6 +37,9 @@ export function RegisterProcess() {
   const [subLoading, setSubLoading] = useState(false);
   
   const [expandedProcessId, setExpandedProcessId] = useState<number | null>(null);
+  
+  // --- FILTRO ---
+  const [selectedWarehouse, setSelectedWarehouse] = useState<string>('All');
 
   // --- ESTADOS DE CRIAÇÃO ---
   const [newProcess, setNewProcess] = useState({
@@ -450,9 +453,30 @@ export function RegisterProcess() {
               </div>
 
               {/* Badge animado */}
-              <div className="hidden md:flex items-center gap-2 bg-gradient-to-r from-dhl-yellow/20 to-orange-400/20 px-4 py-2 rounded-full border border-dhl-yellow/30 animate-slide-in-right">
-                <Activity size={16} className="text-dhl-red" />
-                <span className="text-sm font-bold text-gray-700">Sistema Ativo</span>
+              <div className="hidden md:flex items-center gap-3">
+                <div className="flex items-center gap-2 bg-gradient-to-r from-dhl-yellow/20 to-orange-400/20 px-4 py-2 rounded-full border border-dhl-yellow/30 animate-slide-in-right">
+                  <Activity size={16} className="text-dhl-red" />
+                  <span className="text-sm font-bold text-gray-700">Sistema Ativo</span>
+                </div>
+                
+                {/* Filtro de Warehouse */}
+                <div className="bg-white rounded-xl shadow-lg border-2 border-gray-200 overflow-hidden animate-slide-in-right" style={{ animationDelay: '0.1s' }}>
+                  <div className="p-3 flex items-center gap-3">
+                    <Warehouse size={18} className="text-purple-500"/>
+                    <div className="flex flex-col">
+                      <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">Filtrar por CD</label>
+                      <select 
+                        className="bg-transparent font-black text-gray-700 outline-none cursor-pointer text-sm mt-0.5 hover:text-dhl-red transition-colors"
+                        value={selectedWarehouse}
+                        onChange={e => setSelectedWarehouse(e.target.value)}
+                      >
+                        <option value="All">🏭 Todos</option>
+                        <option value="M03">📦 M03</option>
+                        <option value="RC">🏢 RC</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -587,11 +611,19 @@ export function RegisterProcess() {
               <h3 className="font-black text-3xl text-gray-900">Processos Ativos</h3>
               <div className="flex-1 h-px bg-gradient-to-r from-gray-300 to-transparent"></div>
               <div className="bg-dhl-red/10 px-4 py-2 rounded-full border border-dhl-red/20">
-                <span className="text-sm font-bold text-dhl-red">{processes.length} {processes.length === 1 ? 'Processo' : 'Processos'}</span>
+                <span className="text-sm font-bold text-dhl-red">
+                  {processes.filter(p => selectedWarehouse === 'All' || p.warehouse === selectedWarehouse).length} {processes.filter(p => selectedWarehouse === 'All' || p.warehouse === selectedWarehouse).length === 1 ? 'Processo' : 'Processos'}
+                </span>
               </div>
+              {selectedWarehouse !== 'All' && (
+                <div className="bg-purple-100 px-4 py-2 rounded-full border border-purple-300 flex items-center gap-2 animate-scale-in">
+                  <Warehouse size={14} className="text-purple-600"/>
+                  <span className="text-xs font-bold text-purple-700">Filtrado: {selectedWarehouse}</span>
+                </div>
+              )}
             </div>
             
-            {processes.map((process, index) => (
+            {processes.filter(p => selectedWarehouse === 'All' || p.warehouse === selectedWarehouse).map((process, index) => (
               <div 
                 key={process.id} 
                 className="bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden hover:shadow-2xl hover:-translate-y-2 transition-all duration-500 animate-fade-in-up"

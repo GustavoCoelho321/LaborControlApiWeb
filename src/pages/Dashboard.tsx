@@ -7,10 +7,9 @@ import {
 import { 
   LayoutDashboard, TrendingUp, Users, Package, 
   AlertTriangle, Clock, CalendarRange, Warehouse, ArrowDownCircle, 
-  Construction, CheckCircle2, Zap, BrainCircuit, Activity, Info // <--- Adicionado aqui
+  Construction, CheckCircle2, Zap, BrainCircuit, Activity, Info
 } from 'lucide-react';
 import { api } from '../Services/api';
-import { AIScheduler, type AIProcessInput, type AIDayData } from '../utils/AIScheduler';
 
 // --- CONSTANTES ---
 const DAYS = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"];
@@ -29,7 +28,6 @@ export function Dashboard() {
   const [insights, setInsights] = useState<{type: string, title: string, desc: string}[]>([]);
   const [kpis, setKpis] = useState({ totalVol: 0, peakBacklog: 0, avgHc: 0, slaAdherence: 0 });
 
-  // Inicializa com a semana atual
   useEffect(() => {
     const today = new Date();
     handleDateSelection(today.toISOString().split('T')[0]);
@@ -39,7 +37,7 @@ export function Dashboard() {
     if(!dateVal) return;
     const date = new Date(dateVal + 'T12:00:00'); 
     const day = date.getDay(); 
-    const diff = date.getDate() - day + (day === 0 ? -6 : 1); // Ajusta para Segunda
+    const diff = date.getDate() - day + (day === 0 ? -6 : 1); 
     
     const monday = new Date(date);
     monday.setDate(diff);
@@ -72,7 +70,7 @@ export function Dashboard() {
         weekDates.push(d.toISOString().split('T')[0]);
       }
 
-      // Busca Processos e Forecast
+      // 1. Busca Dados Básicos
       const [procResp, fcResp] = await Promise.all([
         api.get('/processes'),
         api.get('/forecast/monthly', { params: { year: start.getFullYear(), month: start.getMonth()+1 } }) 
@@ -81,8 +79,8 @@ export function Dashboard() {
       const processes = procResp.data.filter((p: any) => !p.warehouse || p.warehouse === 'M03' || p.warehouse === 'All');
       const allForecasts = fcResp.data?.data || [];
 
-      // Monta Input
-      const weekInput: AIDayData[] = weekDates.map((dateStr, idx) => {
+      // 2. Monta Payload para o Backend (SmartScheduler)
+      const weekInput = weekDates.map((dateStr) => {
         const fc = allForecasts.find((f: any) => f.date.startsWith(dateStr));
         const vol = fc ? fc.inboundM03 * 1000 : 0; 
         
@@ -92,13 +90,15 @@ export function Dashboard() {
             shiftStart: 0,
             limitInbound: 60000,
             limitOutbound: 130000,
-            maxHcT1: 0, maxHcT2: 0, maxHcT3: 0,
+            maxHcT1: 100, // Default para simulação
+            maxHcT2: 100,
+            maxHcT3: 60,
             efficiencyMatrix: generateEfficiencyMatrix(),
             parentSettings: {} 
         };
       });
 
-      const aiInput: AIProcessInput[] = processes.map((p: any) => ({
+      const aiInput = processes.map((p: any) => ({
         id: p.id, 
         name: p.name, 
         type: p.type, 
@@ -107,16 +107,19 @@ export function Dashboard() {
         travelTime: p.travelTime, 
         subprocesses: p.subprocesses ? p.subprocesses.map((s:any) => ({
             id: s.id, 
-            standardProductivity: s.standardProductivity,
-            efficiency: s.efficiency,
-            travelTime: s.travelTime
+            standardProductivity: s.standardProductivity
         })) : []
       }));
 
-      // Executa Engine
-      const hcMatrix = AIScheduler.calculateSchedule(weekInput, aiInput);
+      // 3. CHAMA O BACKEND (MUDANÇA PRINCIPAL)
+      const response = await api.post('/simulation/smart-distribute', {
+          weekData: weekInput,
+          processes: aiInput
+      });
 
-      // Pós-Processamento para Gráficos
+      const hcMatrix = response.data; // O Backend devolve o Dictionary<string, int>
+
+      // 4. Processa o Retorno para Gráficos
       const weeklyStats = [];
       let totalWeekVol = 0;
       let totalHcHours = 0;
@@ -125,12 +128,15 @@ export function Dashboard() {
 
       const procEffMap: Record<string, {target: number, realized: number}> = {};
 
-      // Simulação Simplificada para Extrair KPIs
+      // Como o backend já calculou tudo, aqui nós apenas "reconstituímos" os totais para exibir
+      // Para simplificar o Dashboard, fazemos uma estimativa baseada no HC retornado
+      
       for (let d = 0; d < 7; d++) {
         let dailyInput = weekInput[d].volume;
         totalWeekVol += dailyInput;
         let dailyHc = 0;
 
+        // Soma HCs do dia retornados pelo backend
         Object.keys(hcMatrix).forEach(key => {
             const [type, id, hour, dayIdx] = key.split('-');
             if (parseInt(dayIdx) === d && type === 'P') {
@@ -148,7 +154,8 @@ export function Dashboard() {
             }
         });
 
-        // Estimativa de Saída
+        // Estimativa de Saída baseada no HC calculado
+        // (No mundo ideal, o backend retornaria também o output, mas podemos inferir)
         const dailyCapacity = Object.values(procEffMap).reduce((acc, curr) => acc + curr.realized, 0) / (d + 1) * 24; 
         const dailyOutput = Math.min(dailyInput * 1.05, dailyCapacity); 
         const backlog = Math.max(0, dailyInput - dailyOutput);
@@ -173,9 +180,9 @@ export function Dashboard() {
         fullMark: 100
       })).slice(0, 6);
 
-      // Simulação Horária do Dia de Pico
+      // Simulação Horária do Dia de Pico (Estética)
       const criticalDayData = [];
-      const peakVol = Math.max(...weekInput.map(w => w.volume));
+      const peakVol = Math.max(...weekInput.map((w: any) => w.volume));
       let currentBl = 5000;
       for(let h=0; h<24; h++) {
          const hourVol = (peakVol / 18) * (h > 6 && h < 22 ? 1.2 : 0.1);
@@ -241,7 +248,7 @@ export function Dashboard() {
               </h1>
               <p className="text-gray-500 mt-2 flex items-center gap-2">
                 <BrainCircuit size={16} className="text-purple-600"/>
-                Simulação baseada em IA com restrições de Eficiência e Deslocamento.
+                Simulação baseada em IA (ML.NET) com restrições de Eficiência.
               </p>
             </div>
 
@@ -306,7 +313,7 @@ export function Dashboard() {
                     className="w-full md:w-auto px-8 py-4 bg-gradient-to-r from-dhl-red to-red-700 text-white font-bold rounded-xl shadow-lg shadow-red-200 flex items-center justify-center gap-3 hover:scale-105 active:scale-95 transition-all disabled:opacity-70 disabled:cursor-not-allowed"
                 >
                     {loading ? <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div> : <Zap size={20} fill="white" />}
-                    {loading ? 'Simulando Cenários...' : 'Atualizar Dashboard'}
+                    {loading ? 'Simulando com ML.NET...' : 'Atualizar Dashboard'}
                 </button>
             </div>
 
