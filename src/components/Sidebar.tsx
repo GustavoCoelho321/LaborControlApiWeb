@@ -7,14 +7,43 @@ import {
   UserPlus,
   LayoutDashboard,
   ArrowDownCircle,
-  BrainCircuit // <--- Importei o ícone de IA aqui
+  BrainCircuit
 } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { useState, useEffect } from 'react'; // <--- Adicione useState e useEffect
 import dhlLogo from '../assets/Dhl_Logo.png';
+
+// --- HELPER PARA LER O JWT SEM BIBLIOTECA ---
+function getUserRole(): string | null {
+  const token = localStorage.getItem('token');
+  if (!token) return null;
+
+  try {
+    const base64Url = token.split('.')[1];
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const jsonPayload = decodeURIComponent(window.atob(base64).split('').map(function(c) {
+        return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+    }).join(''));
+
+    const decoded = JSON.parse(jsonPayload);
+    
+    // O .NET geralmente salva a role nesta chave longa, ou simplesmente "role"
+    return decoded["http://schemas.microsoft.com/ws/2008/06/identity/claims/role"] || decoded["role"] || null;
+  } catch (error) {
+    return null;
+  }
+}
 
 export function Sidebar() {
   const navigate = useNavigate();
   const location = useLocation();
+  const [isAdmin, setIsAdmin] = useState(false); // <--- Estado para controle
+
+  // Verifica a Role ao carregar a Sidebar
+  useEffect(() => {
+    const role = getUserRole();
+    setIsAdmin(role === 'Admin');
+  }, []);
 
   const handleLogout = () => {
     if(window.confirm("Deseja realmente sair do sistema?")) {
@@ -78,7 +107,7 @@ export function Sidebar() {
         {/* --- MENU --- */}
         <nav className="flex-1 px-4 py-6 space-y-6 overflow-y-auto scrollbar-hide">
           
-          {/* GRUPO OPERACIONAL */}
+          {/* GRUPO OPERACIONAL (Visível para todos) */}
           <div className="animate-fade-in-stagger nav-item-1">
             <div className="flex items-center gap-2 px-2 mb-3">
               <div className="w-1 h-4 bg-gradient-to-b from-[#D40511] to-[#FF0000] rounded-full"></div>
@@ -120,31 +149,33 @@ export function Sidebar() {
             </div>
           </div>
 
-          {/* GRUPO ADMINISTRATIVO */}
-          <div className="animate-fade-in-stagger nav-item-2">
-            <div className="flex items-center gap-2 px-2 mb-3">
-              <div className="w-1 h-4 bg-gradient-to-b from-[#FFCC00] to-[#FFD700] rounded-full"></div>
-              <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Administração</p>
+          {/* GRUPO ADMINISTRATIVO (Só aparece se isAdmin for true) */}
+          {isAdmin && (
+            <div className="animate-fade-in-stagger nav-item-2 mt-6">
+                <div className="flex items-center gap-2 px-2 mb-3">
+                <div className="w-1 h-4 bg-gradient-to-b from-[#FFCC00] to-[#FFD700] rounded-full"></div>
+                <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Administração</p>
+                </div>
+                <div className="space-y-1">
+                <NavItem 
+                    to="/processes" 
+                    icon={<Settings size={20} />} 
+                    label="Config. Processos" 
+                    active={isActive('/processes')}
+                    index={5}
+                />
+                <NavItem 
+                    to="/register" 
+                    icon={<UserPlus size={20} />} 
+                    label="Gestão Usuários" 
+                    active={isActive('/register')}
+                    index={6}
+                />
+                </div>
             </div>
-            <div className="space-y-1">
-              <NavItem 
-                to="/processes" 
-                icon={<Settings size={20} />} 
-                label="Config. Processos" 
-                active={isActive('/processes')}
-                index={5}
-              />
-              <NavItem 
-                to="/register" 
-                icon={<UserPlus size={20} />} 
-                label="Gestão Usuários" 
-                active={isActive('/register')}
-                index={6}
-              />
-            </div>
-          </div>
+          )}
 
-          <div className="flex items-center gap-3 px-2 opacity-50">
+          <div className="flex items-center gap-3 px-2 opacity-50 mt-4">
             <div className="flex-1 h-px bg-gradient-to-r from-transparent via-gray-300 to-transparent"></div>
             <div className="w-1.5 h-1.5 bg-[#FFCC00] rounded-full"></div>
             <div className="flex-1 h-px bg-gradient-to-r from-transparent via-gray-300 to-transparent"></div>
@@ -155,29 +186,31 @@ export function Sidebar() {
         <div className="p-4 bg-gradient-to-r from-gray-50 to-white border-t border-gray-200 relative overflow-hidden">
           <div className="absolute inset-0 opacity-5" style={{backgroundImage: `repeating-linear-gradient(45deg, transparent, transparent 10px, rgba(0,0,0,0.1) 10px, rgba(0,0,0,0.1) 11px)`}}></div>
           
-          {/* --- BADGE POWERED BY ML IA (NOVO) --- */}
+          {/* BADGE ML IA */}
           <div className="mb-4">
             <div className="bg-gradient-to-r from-gray-900 to-gray-800 rounded-xl p-2.5 flex items-center justify-center gap-2 shadow-md border border-gray-700 group relative overflow-hidden">
-                {/* Shine effect */}
                 <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-1000"></div>
-                
                 <BrainCircuit size={14} className="text-purple-400 group-hover:text-purple-300 transition-colors animate-pulse" />
                 <span className="text-[10px] font-bold text-gray-300 uppercase tracking-wider">
                     Powered by <span className="text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-400 font-black">ML IA</span>
                 </span>
             </div>
           </div>
-          {/* --------------------------------------- */}
 
           <div className="relative z-10 flex items-center gap-3 mb-4 px-2 group cursor-pointer">
             <div className="relative">
-              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#D40511] to-[#FF0000] flex items-center justify-center text-white font-bold shadow-lg ring-2 ring-white group-hover:scale-110 transition-transform duration-300">AD</div>
+              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#D40511] to-[#FF0000] flex items-center justify-center text-white font-bold shadow-lg ring-2 ring-white group-hover:scale-110 transition-transform duration-300">
+                {isAdmin ? 'AD' : 'US'}
+              </div>
               <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-green-500 rounded-full border-2 border-white shadow-sm"></div>
             </div>
             <div className="flex-1 overflow-hidden">
-              <h4 className="text-sm font-bold text-gray-800 truncate group-hover:text-[#D40511] transition-colors">Admin User</h4>
+              <h4 className="text-sm font-bold text-gray-800 truncate group-hover:text-[#D40511] transition-colors">
+                  {isAdmin ? 'Administrador' : 'Usuário'}
+              </h4>
               <p className="text-[10px] text-gray-500 truncate flex items-center gap-1">
-                <span className="w-1 h-1 bg-[#FFCC00] rounded-full"></span> Superintendente
+                <span className="w-1 h-1 bg-[#FFCC00] rounded-full"></span> 
+                {isAdmin ? 'Superintendente' : 'Operacional'}
               </p>
             </div>
           </div>
