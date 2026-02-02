@@ -680,7 +680,7 @@ export function SchedulerRC() {
                 </div>
                 <button onClick={handleImportWeeklyForecast} disabled={importing} className="h-12 px-6 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold shadow-lg shadow-blue-200 flex items-center gap-2 transition-all text-xs disabled:opacity-50">
                     {importing ? <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div> : <CloudDownload size={18} />} 
-                    Importar RC
+                    Importar Forecast
                 </button>
             </div>
 

@@ -6,7 +6,8 @@ import {
   FileText, 
   UserPlus,
   LayoutDashboard,
-  ArrowDownCircle // Mantive caso use em outro lugar, ou pode remover
+  ArrowDownCircle,
+  BrainCircuit // <--- Importei o ícone de IA aqui
 } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import dhlLogo from '../assets/Dhl_Logo.png';
@@ -22,7 +23,6 @@ export function Sidebar() {
     }
   };
 
-  // Verifica se a rota começa com o path (para manter ativo em sub-rotas se houver)
   const isActive = (path: string) => location.pathname === path;
 
   return (
@@ -86,7 +86,6 @@ export function Sidebar() {
             </div>
             <div className="space-y-1">
               
-              {/* UNIFICADO: Control Tower (Com filtros internos) */}
               <NavItem 
                 to="/control-tower" 
                 icon={<LayoutDashboard size={20} />} 
@@ -156,6 +155,20 @@ export function Sidebar() {
         <div className="p-4 bg-gradient-to-r from-gray-50 to-white border-t border-gray-200 relative overflow-hidden">
           <div className="absolute inset-0 opacity-5" style={{backgroundImage: `repeating-linear-gradient(45deg, transparent, transparent 10px, rgba(0,0,0,0.1) 10px, rgba(0,0,0,0.1) 11px)`}}></div>
           
+          {/* --- BADGE POWERED BY ML IA (NOVO) --- */}
+          <div className="mb-4">
+            <div className="bg-gradient-to-r from-gray-900 to-gray-800 rounded-xl p-2.5 flex items-center justify-center gap-2 shadow-md border border-gray-700 group relative overflow-hidden">
+                {/* Shine effect */}
+                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-1000"></div>
+                
+                <BrainCircuit size={14} className="text-purple-400 group-hover:text-purple-300 transition-colors animate-pulse" />
+                <span className="text-[10px] font-bold text-gray-300 uppercase tracking-wider">
+                    Powered by <span className="text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-400 font-black">ML IA</span>
+                </span>
+            </div>
+          </div>
+          {/* --------------------------------------- */}
+
           <div className="relative z-10 flex items-center gap-3 mb-4 px-2 group cursor-pointer">
             <div className="relative">
               <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#D40511] to-[#FF0000] flex items-center justify-center text-white font-bold shadow-lg ring-2 ring-white group-hover:scale-110 transition-transform duration-300">AD</div>
