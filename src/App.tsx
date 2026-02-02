@@ -4,33 +4,32 @@ import { BrowserRouter as Router, Routes, Route, Outlet, Navigate } from 'react-
 import { Sidebar } from './components/Sidebar';
 
 // --- IMPORTAÇÃO DAS PÁGINAS ---
-import { Login } from './pages/Login'; // <--- Nova importação
-import { Dashboard } from './pages/Dashboard';
+import { Login } from './pages/Login';
+import { Dashboard } from './pages/DashboardM03';
+import { DashboardRC } from './pages/DashboardRc'; // Certifique-se que o arquivo é DashboardRC.tsx
+import { ControlTower } from './pages/ControlTower'; // A página com os filtros
 import { SchedulerM03 } from './pages/SchedulerM03';
+import { SchedulerRC } from './pages/SchedulerRC';
 import { Planning } from './pages/Planning';
 import { RegisterUser } from './pages/RegisterUser';
 import { RegisterProcess } from './pages/RegisterProcess';
 
 // --- LAYOUT PROTEGIDO (Com Sidebar) ---
-// Este componente serve de "casca" para todas as páginas internas
 function PrivateLayout() {
-  // Verificação simples de autenticação (pode ser melhorada com Context API depois)
+  // Verifica autenticação
   const isAuthenticated = !!localStorage.getItem('token');
 
-  // Se não estiver logado, chuta para o login
+  // Se não estiver logado, manda pro login
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />;
   }
 
+  // Se estiver logado, renderiza a Sidebar e o Conteúdo da Rota (Outlet)
   return (
     <div className="flex min-h-screen bg-gray-100 font-sans text-gray-900">
-      {/* Sidebar Fixa */}
       <Sidebar />
-
-      {/* Área de Conteúdo (com margem para não ficar embaixo da sidebar) */}
       <div className="flex-1 ml-64 transition-all duration-300">
         <div className="p-8 max-w-[1920px] mx-auto">
-          {/* O <Outlet /> renderiza a rota filha atual (Dashboard, Scheduler, etc.) */}
           <Outlet />
         </div>
       </div>
@@ -44,20 +43,36 @@ export function App() {
     <Router>
       <Routes>
         
-        {/* ROTA PÚBLICA (Sem Sidebar) */}
+        {/* ROTA PÚBLICA */}
         <Route path="/login" element={<Login />} />
 
-        {/* ROTAS PROTEGIDAS (Com Sidebar) */}
+        {/* ROTAS PROTEGIDAS */}
         <Route element={<PrivateLayout />}>
-          <Route path="/" element={<Dashboard />} />
+          
+          {/* Rota Unificada (Com abas M03/RC) */}
+          <Route path="/control-tower" element={<ControlTower />} />
+
+          {/* Dashboards Individuais (Opcional, mas bom manter acessível) */}
+          <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/dashboard-rc" element={<DashboardRC />} />
+
+          {/* Simuladores */}
           <Route path="/scheduler" element={<SchedulerM03 />} />
+          <Route path="/scheduler-rc" element={<SchedulerRC />} />
+          
+          {/* Outras Páginas */}
           <Route path="/planning" element={<Planning />} />
           <Route path="/processes" element={<RegisterProcess />} />
           <Route path="/register" element={<RegisterUser />} />
         </Route>
 
-        {/* Rota de Catch-all (Redireciona qualquer url errada para o home/login) */}
-        <Route path="*" element={<Navigate to="/" replace />} />
+        {/* REDIRECIONAMENTOS */}
+        
+        {/* 1. Ao acessar a raiz '/', redireciona para a Control Tower */}
+        <Route path="/" element={<Navigate to="/control-tower" replace />} />
+
+        {/* 2. Qualquer rota desconhecida redireciona para o Login */}
+        <Route path="*" element={<Navigate to="/login" replace />} />
 
       </Routes>
     </Router>
