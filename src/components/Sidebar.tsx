@@ -1,5 +1,4 @@
 import { 
-  BarChart3, 
   Settings, 
   LogOut, 
   ChevronRight, 
@@ -7,7 +6,7 @@ import {
   FileText, 
   UserPlus,
   LayoutDashboard,
-  ArrowDownCircle // <--- Importe o ícone novo
+  ArrowDownCircle // Mantive caso use em outro lugar, ou pode remover
 } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import dhlLogo from '../assets/Dhl_Logo.png';
@@ -23,33 +22,23 @@ export function Sidebar() {
     }
   };
 
+  // Verifica se a rota começa com o path (para manter ativo em sub-rotas se houver)
   const isActive = (path: string) => location.pathname === path;
 
   return (
     <>
       <style>{`
-        @keyframes slide-in-left {
-          from { opacity: 0; transform: translateX(-20px); }
-          to { opacity: 1; transform: translateX(0); }
-        }
-        @keyframes fade-in-stagger {
-          from { opacity: 0; transform: translateY(10px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-        @keyframes shine {
-          from { left: -100%; }
-          to { left: 100%; }
-        }
+        @keyframes slide-in-left { from { opacity: 0; transform: translateX(-20px); } to { opacity: 1; transform: translateX(0); } }
+        @keyframes fade-in-stagger { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes shine { from { left: -100%; } to { left: 100%; } }
         .animate-slide-in-left { animation: slide-in-left 0.4s ease-out; }
         .animate-fade-in-stagger { animation: fade-in-stagger 0.4s ease-out backwards; }
         
-        /* Ajustei os delays para acomodar o novo item */
         .nav-item-1 { animation-delay: 0.05s; }
         .nav-item-2 { animation-delay: 0.1s; }
         .nav-item-3 { animation-delay: 0.15s; }
         .nav-item-4 { animation-delay: 0.2s; }
         .nav-item-5 { animation-delay: 0.25s; }
-        .nav-item-6 { animation-delay: 0.3s; }
 
         .scrollbar-hide::-webkit-scrollbar { display: none; }
         .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
@@ -96,13 +85,16 @@ export function Sidebar() {
               <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Gestão Operacional</p>
             </div>
             <div className="space-y-1">
+              
+              {/* UNIFICADO: Control Tower (Com filtros internos) */}
               <NavItem 
-                to="/dashboard" 
+                to="/control-tower" 
                 icon={<LayoutDashboard size={20} />} 
                 label="Control Tower" 
-                active={isActive('/dashboard') || isActive('/')} // Ajuste para home
+                active={isActive('/control-tower') || isActive('/')}
                 index={1}
               />
+
               <NavItem 
                 to="/scheduler" 
                 icon={<CalendarClock size={20} />} 
@@ -110,7 +102,7 @@ export function Sidebar() {
                 active={isActive('/scheduler')}
                 index={2}
               />
-              {/* --- ITEM NOVO AQUI --- */}
+              
               <NavItem 
                 to="/scheduler-rc" 
                 icon={<ArrowDownCircle size={20} />} 
@@ -118,7 +110,7 @@ export function Sidebar() {
                 active={isActive('/scheduler-rc')}
                 index={3}
               />
-              {/* ---------------------- */}
+
               <NavItem 
                 to="/planning" 
                 icon={<FileText size={20} />} 
