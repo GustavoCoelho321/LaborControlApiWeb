@@ -11,9 +11,29 @@ import {
 } from 'lucide-react';
 import { api } from '../Services/api';
 
-// --- CONSTANTES ---
+// --- CONSTANTES & MATRIZES ---
 const DAYS = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"];
 const LOW_EFFICIENCY_HOURS = [0, 1, 11, 12, 18, 19];
+
+const RECEIVING_SHARE_MATRIX: number[][] = [
+  [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6, 6, 9, 9, 7, 14, 20, 20, 9], 
+  [4, 3, 5, 4, 5, 4, 4, 4, 5, 8, 6, 3, 1, 5, 4, 3, 6, 5, 5, 3, 3, 3, 6, 4], 
+  [5, 3, 3, 5, 5, 5, 4, 5, 5, 3, 5, 3, 3, 5, 5, 5, 4, 4, 2, 3, 4, 4, 3, 3], 
+  [5, 2, 2, 5, 5, 4, 4, 4, 5, 5, 5, 5, 2, 2, 5, 7, 6, 5, 4, 2, 3, 5, 5, 4], 
+  [5, 2, 2, 5, 5, 4, 4, 4, 5, 5, 5, 5, 2, 2, 5, 7, 6, 5, 4, 2, 3, 5, 5, 4], 
+  [4, 2, 2, 4, 4, 3, 3, 4, 5, 5, 6, 3, 3, 6, 7, 5, 6, 4, 3, 4, 3, 6, 6, 2], 
+  [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  
+];
+
+const CONSOLIDATION_MATRIX: number[][] = [
+  [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 70, 70, 70, 70, 70, 70, 167, 115, 106, 94],
+  [65, 76, 61, 56, 57, 58, 59, 69, 62, 63, 64, 64, 64, 65, 67, 68, 69, 70, 71, 72, 74, 77, 78, 115],
+  [123, 119, 120, 116, 106, 99, 95, 92, 93, 93, 95, 95, 97, 98, 100, 102, 103, 105, 106, 107, 109, 112, 116, 120],
+  [89, 93, 93, 94, 93, 94, 95, 96, 99, 102, 104, 108, 108, 109, 111, 113, 116, 118, 118, 120, 122, 123, 123, 121],
+  [89, 92, 92, 94, 96, 97, 98, 101, 102, 102, 103, 103, 112, 104, 105, 107, 109, 111, 112, 113, 115, 116, 114, 112],
+  [88, 91, 96, 96, 98, 95, 94, 98, 100, 101, 101, 102, 102, 103, 105, 108, 110, 111, 112, 113, 115, 115, 115, 181],
+  [125, 126, 124, 127, 137, 138, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+];
 
 export function Dashboard() {
   const [activeTab, setActiveTab] = useState<'3P' | 'RC'>('3P');
@@ -76,10 +96,24 @@ export function Dashboard() {
         api.get('/forecast/monthly', { params: { year: start.getFullYear(), month: start.getMonth()+1 } }) 
       ]);
 
-      const processes = procResp.data.filter((p: any) => !p.warehouse || p.warehouse === 'M03' || p.warehouse === 'All');
+      let processes = procResp.data.filter((p: any) => !p.warehouse || p.warehouse === 'M03' || p.warehouse === 'All');
       const allForecasts = fcResp.data?.data || [];
 
-      // 2. Monta Payload para o Backend (SmartScheduler)
+      // Ordena processos
+      processes.sort((a:any, b:any) => {
+          const getRank = (name: string) => {
+              const n = name.toLowerCase();
+              if (n.includes('recebimento')) return 1;
+              if (n.includes('put') || n.includes('armazenagem')) return 2;
+              if (n.includes('picking') || n.includes('separação')) return 3;
+              if (n.includes('sort')) return 4;
+              if (n.includes('pack') || n.includes('embalagem')) return 5;
+              return 99;
+          };
+          return getRank(a.name) - getRank(b.name);
+      });
+
+      // 2. Monta Payload
       const weekInput = weekDates.map((dateStr) => {
         const fc = allForecasts.find((f: any) => f.date.startsWith(dateStr));
         const vol = fc ? fc.inboundM03 * 1000 : 0; 
@@ -90,7 +124,7 @@ export function Dashboard() {
             shiftStart: 0,
             limitInbound: 60000,
             limitOutbound: 130000,
-            maxHcT1: 100, // Default para simulação
+            maxHcT1: 100,
             maxHcT2: 100,
             maxHcT3: 60,
             efficiencyMatrix: generateEfficiencyMatrix(),
@@ -111,66 +145,137 @@ export function Dashboard() {
         })) : []
       }));
 
-      // 3. CHAMA O BACKEND (MUDANÇA PRINCIPAL)
+      // 3. CHAMA O BACKEND
       const response = await api.post('/simulation/smart-distribute', {
           weekData: weekInput,
           processes: aiInput
       });
 
-      const hcMatrix = response.data; // O Backend devolve o Dictionary<string, int>
+      const hcMatrix = response.data; 
 
-      // 4. Processa o Retorno para Gráficos
-      const weeklyStats = [];
+      // 4. PÓS-PROCESSAMENTO DO FLUXO
+      // --- CORREÇÃO AQUI: Tipagem Explícita para evitar o erro do TypeScript ---
+      const weeklyStats: { day: string; volume: number; capacity: number; backlog: number; hc: number }[] = [];
+      const criticalDayData: { hour: string; backlog: number; entrada: number; saida: number }[] = [];
+      // -------------------------------------------------------------------------
+
       let totalWeekVol = 0;
       let totalHcHours = 0;
       let maxBacklogFound = 0;
       let totalSlaBreach = 0;
+      
+      const outputsByProcess: Record<number, number[][]> = {};
+      processes.forEach((p:any) => {
+          outputsByProcess[p.id] = Array.from({length: 7}, () => Array(24).fill(0));
+      });
+
+      const runningBacklogs: Record<number, number> = {};
+      processes.forEach((p:any) => runningBacklogs[p.id] = 0);
 
       const procEffMap: Record<string, {target: number, realized: number}> = {};
 
-      // Como o backend já calculou tudo, aqui nós apenas "reconstituímos" os totais para exibir
-      // Para simplificar o Dashboard, fazemos uma estimativa baseada no HC retornado
-      
+      // Loop Dia a Dia
       for (let d = 0; d < 7; d++) {
         let dailyInput = weekInput[d].volume;
         totalWeekVol += dailyInput;
         let dailyHc = 0;
+        let dailyOutput = 0;
+        let dailyBacklog = 0;
 
-        // Soma HCs do dia retornados pelo backend
-        Object.keys(hcMatrix).forEach(key => {
-            const [type, id, hour, dayIdx] = key.split('-');
-            if (parseInt(dayIdx) === d && type === 'P') {
-                const hc = hcMatrix[key];
-                dailyHc += hc;
+        // Loop Hora a Hora
+        for(let h=0; h<24; h++) {
+            
+            processes.forEach((proc:any, pIdx:number) => {
+                const procName = proc.name.toLowerCase();
+                const isPicking = procName.includes('picking') || procName.includes('separação');
                 
-                // Acumula para radar
-                const proc = processes.find((p:any) => p.id === parseInt(id));
+                // 1. INPUT
+                let input = 0;
+                if (pIdx === 0 && proc.type === 'Inbound') {
+                    const share = RECEIVING_SHARE_MATRIX[d][h];
+                    input = dailyInput * (share / 100);
+                } else if (pIdx > 0) {
+                    const prevProc = processes[pIdx - 1];
+                    const prevOutput = outputsByProcess[prevProc.id][d][h];
+                    
+                    if (isPicking) {
+                        const consol = CONSOLIDATION_MATRIX[d][h] / 100;
+                        input = prevOutput * consol;
+                    } else {
+                        input = prevOutput;
+                    }
+                }
+
+                // 2. HC
+                const hc = hcMatrix[`P-${proc.id}-${h}-${d}`] || 0;
+                dailyHc += hc;
+
+                // 3. OUTPUT
+                const effFactor = (weekInput[d].efficiencyMatrix[h] ?? 100) / 100;
+                const netTime = Math.max(0.1, (60 - (proc.travelTime || 0)) / 60);
+                const capacity = hc * proc.standardProductivity * (proc.efficiency || 1) * netTime * effFactor;
+
+                const currentBacklog = runningBacklogs[proc.id];
+                const totalLoad = input + currentBacklog;
+                const output = Math.min(totalLoad, capacity);
+                
+                outputsByProcess[proc.id][d][h] = output;
+                runningBacklogs[proc.id] = Math.max(0, totalLoad - output);
+
+                if (proc.type === 'Outbound') dailyOutput += output;
+                
+                // Popula o array do dia crítico (Terça-feira, index 1)
+                if (d === 1 && proc.type === 'Outbound') { 
+                    criticalDayData.push({
+                        hour: `${h}h`,
+                        backlog: Math.round(runningBacklogs[proc.id]),
+                        entrada: Math.round(input),
+                        saida: Math.round(output)
+                    });
+                }
+
                 if (proc) {
                     if (!procEffMap[proc.name]) procEffMap[proc.name] = {target: 0, realized: 0};
-                    const targetProd = proc.standardProductivity * (proc.efficiency || 1);
                     procEffMap[proc.name].target += (hc * proc.standardProductivity); 
-                    procEffMap[proc.name].realized += (hc * targetProd);
+                    procEffMap[proc.name].realized += capacity;
                 }
-            }
-        });
+            });
+        }
 
-        // Estimativa de Saída baseada no HC calculado
-        // (No mundo ideal, o backend retornaria também o output, mas podemos inferir)
-        const dailyCapacity = Object.values(procEffMap).reduce((acc, curr) => acc + curr.realized, 0) / (d + 1) * 24; 
-        const dailyOutput = Math.min(dailyInput * 1.05, dailyCapacity); 
-        const backlog = Math.max(0, dailyInput - dailyOutput);
-
+        dailyBacklog = Object.values(runningBacklogs).reduce((a, b) => a + b, 0);
+        
         weeklyStats.push({
             day: DAYS[d],
             volume: Math.round(dailyInput),
-            capacity: Math.round(dailyCapacity / 7), 
-            backlog: Math.round(backlog),
+            capacity: Math.round(dailyOutput),
+            backlog: Math.round(dailyBacklog),
             hc: Math.round(dailyHc / 24)
         });
 
-        if (backlog > maxBacklogFound) maxBacklogFound = backlog;
-        if (backlog > 5000) totalSlaBreach++; 
+        if (dailyBacklog > maxBacklogFound) maxBacklogFound = dailyBacklog;
+        if (dailyBacklog > 20000) totalSlaBreach++; 
         totalHcHours += dailyHc;
+      }
+
+      // --- GERANDO INSIGHTS ---
+      const newInsights = [];
+      
+      if (maxBacklogFound > 30000) {
+        newInsights.push({ type: 'warning', title: 'Risco Crítico de SLA', desc: `Pico de backlog de ${(maxBacklogFound/1000).toFixed(1)}k unidades detectado. Considere aumentar T3.` });
+      } else if (maxBacklogFound > 10000) {
+        newInsights.push({ type: 'info', title: 'Atenção Operacional', desc: 'Backlog controlado, mas próximo do limite de conforto. Monitore a Terça-feira.' });
+      } else {
+        newInsights.push({ type: 'success', title: 'Operação Saudável', desc: 'Backlog sob controle total. Capacidade sobra para absorver imprevistos.' });
+      }
+      
+      const totalTarget = Object.values(procEffMap).reduce((a, b) => a + b.target, 0);
+      const totalRealized = Object.values(procEffMap).reduce((a, b) => a + b.realized, 0);
+      const globalEff = totalTarget > 0 ? (totalRealized / totalTarget) * 100 : 0;
+
+      if (globalEff < 80) {
+        newInsights.push({ type: 'warning', title: 'Perda de Eficiência', desc: `Perda de ${(100-globalEff).toFixed(0)}% por deslocamento e fadiga. Otimize rotas de Picking.` });
+      } else {
+        newInsights.push({ type: 'success', title: 'Alta Produtividade', desc: 'O time está operando próximo da capacidade máxima teórica.' });
       }
 
       const radarData = Object.entries(procEffMap).map(([name, data]) => ({
@@ -179,35 +284,6 @@ export function Dashboard() {
         B: Math.min(120, Math.round((data.realized / data.target) * 100)) || 0,
         fullMark: 100
       })).slice(0, 6);
-
-      // Simulação Horária do Dia de Pico (Estética)
-      const criticalDayData = [];
-      const peakVol = Math.max(...weekInput.map((w: any) => w.volume));
-      let currentBl = 5000;
-      for(let h=0; h<24; h++) {
-         const hourVol = (peakVol / 18) * (h > 6 && h < 22 ? 1.2 : 0.1);
-         const hourCap = (totalHcHours / (7*24)) * 100;
-         currentBl = Math.max(0, currentBl + hourVol - hourCap);
-         criticalDayData.push({
-             hour: `${h}h`,
-             backlog: Math.round(currentBl),
-             entrada: Math.round(hourVol),
-             saida: Math.round(hourCap)
-         });
-      }
-
-      // Insights Inteligentes
-      const newInsights = [];
-      if (maxBacklogFound > 20000) {
-        newInsights.push({ type: 'warning', title: 'Risco de SLA', desc: 'Backlog projetado acima de 20k na Terça-feira. Recomendado turno extra.' });
-      } else {
-        newInsights.push({ type: 'success', title: 'Operação Estável', desc: 'Capacidade suficiente para absorver picos da semana.' });
-      }
-      
-      const avgEfficiency = radarData.reduce((acc, r) => acc + r.B, 0) / radarData.length;
-      if (avgEfficiency < 85) {
-        newInsights.push({ type: 'info', title: 'Oportunidade', desc: `Eficiência média de ${avgEfficiency.toFixed(0)}%. Revise os tempos de deslocamento.` });
-      }
 
       setWeeklyData(weeklyStats);
       setHourlyTrend(criticalDayData);
@@ -410,7 +486,7 @@ export function Dashboard() {
                                 Comportamento no Pico (Simulação Horária)
                             </h3>
                             <span className="text-xs font-bold text-orange-600 bg-orange-50 px-3 py-1 rounded-full animate-pulse border border-orange-100">
-                                Análise de Gargalo
+                                Análise de Gargalo (Terça-Feira)
                             </span>
                         </div>
                         <div className="h-[250px]">

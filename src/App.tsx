@@ -4,33 +4,27 @@ import { BrowserRouter as Router, Routes, Route, Outlet, Navigate } from 'react-
 import { Sidebar } from './components/Sidebar';
 
 // --- IMPORTAÇÃO DAS PÁGINAS ---
-import { Login } from './pages/Login'; // <--- Nova importação
+import { Login } from './pages/Login';
 import { Dashboard } from './pages/Dashboard';
 import { SchedulerM03 } from './pages/SchedulerM03';
 import { Planning } from './pages/Planning';
 import { RegisterUser } from './pages/RegisterUser';
 import { RegisterProcess } from './pages/RegisterProcess';
+import { SchedulerRC } from './pages/SchedulerRC';
 
 // --- LAYOUT PROTEGIDO (Com Sidebar) ---
-// Este componente serve de "casca" para todas as páginas internas
 function PrivateLayout() {
-  // Verificação simples de autenticação (pode ser melhorada com Context API depois)
   const isAuthenticated = !!localStorage.getItem('token');
 
-  // Se não estiver logado, chuta para o login
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />;
   }
 
   return (
     <div className="flex min-h-screen bg-gray-100 font-sans text-gray-900">
-      {/* Sidebar Fixa */}
       <Sidebar />
-
-      {/* Área de Conteúdo (com margem para não ficar embaixo da sidebar) */}
       <div className="flex-1 ml-64 transition-all duration-300">
         <div className="p-8 max-w-[1920px] mx-auto">
-          {/* O <Outlet /> renderiza a rota filha atual (Dashboard, Scheduler, etc.) */}
           <Outlet />
         </div>
       </div>
@@ -44,20 +38,25 @@ export function App() {
     <Router>
       <Routes>
         
-        {/* ROTA PÚBLICA (Sem Sidebar) */}
+        {/* ROTA PÚBLICA */}
         <Route path="/login" element={<Login />} />
 
-        {/* ROTAS PROTEGIDAS (Com Sidebar) */}
+        {/* ROTAS PROTEGIDAS */}
         <Route element={<PrivateLayout />}>
-          <Route path="/" element={<Dashboard />} />
+          <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/scheduler" element={<SchedulerM03 />} />
+          <Route path="/scheduler-rc" element={<SchedulerRC />} /> {/* <--- NOVA ROTA */}
           <Route path="/planning" element={<Planning />} />
           <Route path="/processes" element={<RegisterProcess />} />
           <Route path="/register" element={<RegisterUser />} />
-        </Route>
+        </Route>        
+        {/* 1. Se o usuário acessar a raiz '/', tenta ir pro Dashboard. 
+               Se não tiver logado, o PrivateLayout vai chutar pro Login. 
+               Se tiver logado, ele vê o Dashboard. Melhor UX. */}
+        <Route path="/" element={<Navigate to="/dashboard" replace />} />
 
-        {/* Rota de Catch-all (Redireciona qualquer url errada para o home/login) */}
-        <Route path="*" element={<Navigate to="/" replace />} />
+        {/* 2. Se acessar qualquer rota doida, manda pro Login (ou Dashboard) */}
+        <Route path="*" element={<Navigate to="/login" replace />} />
 
       </Routes>
     </Router>
