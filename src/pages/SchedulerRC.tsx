@@ -53,6 +53,7 @@ interface DayScenario {
   parentSettings: Record<number, { split: number }>; 
 }
 
+// --- CONSTANTES ---
 const DAYS_OF_WEEK = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"];
 const LOW_EFFICIENCY_HOURS = [0, 1, 11, 12, 18, 19];
 const CACHE_KEY_RC = 'labor_control_week_v1_rc';
@@ -196,8 +197,6 @@ export function SchedulerRC() {
 
     let totalSamplesFound = 0;
     let successCount = 0;
-
-    console.log("Iniciando varredura de processos RC...");
 
     const promises = processOrder.map(async (proc) => {
         const samples: any[] = [];
@@ -415,6 +414,7 @@ export function SchedulerRC() {
     window.location.reload();
   };
 
+  // --- HELPERS DE ESTADO ---
   const updateDayData = (dayIdx: number, field: keyof DayScenario, value: any) => {
     setWeekData(prev => {
       const newData = [...prev];
@@ -424,6 +424,7 @@ export function SchedulerRC() {
   };
 
   const currentDayData = weekData[activeDayIndex];
+  
   const updateCurrentDay = (field: keyof DayScenario, value: any) => updateDayData(activeDayIndex, field, value);
 
   const handleHcChange = (id: string, hour: number, val: string) => {
@@ -455,6 +456,7 @@ export function SchedulerRC() {
     setDraggedItemIndex(null);
   };
 
+  // --- SIMULAÇÃO VISUAL ---
   const weekSimulation = useMemo(() => {
     const fullWeekResults: Record<number, Record<number, SimulationCell[]>> = {};
     const daysHours: Record<number, number[]> = {};
@@ -493,7 +495,6 @@ export function SchedulerRC() {
           const netTimeFactor = Math.max(0.1, (60 - procTravelTime) / 60);
 
           hoursArray.forEach((hour, hIdx) => {
-             // LÓGICA DE INPUT DO RC
              let input = 0;
              const is = (key: string) => pIds[key] === proc.id;
              const getOut = (key: string) => (pIds[key] && outputsByProcess[pIds[key]]) ? outputsByProcess[pIds[key]][dayIdx][hour] : 0;
@@ -506,9 +507,7 @@ export function SchedulerRC() {
              else if (is('sorter_manual')) input = getOut('handover') * 0.04;
              else if (is('consolidador')) input = getOut('handover') * 0.01;
              else if (is('oversized')) input = getOut('handover') * 0.01;
-             else if (is('boxing')) {
-                 input = getOut('sorter_auto') + getOut('sorter_manual') + getOut('consolidador') + getOut('oversized');
-             }
+             else if (is('boxing')) input = getOut('sorter_auto') + getOut('sorter_manual') + getOut('consolidador') + getOut('oversized');
              else if (is('label_a')) input = getOut('boxing') * 0.88;
              else if (is('label_b')) input = getOut('boxing') * 0.12;
 
@@ -522,8 +521,6 @@ export function SchedulerRC() {
              hourlyTotalHc[hIdx] += (directHc + indirectHc);
              
              const hourlyFactor = (dayData.efficiencyMatrix[hour] ?? 100) / 100;
-             
-             // Capacidade Real
              const capacity = directHc * proc.standardProductivity * procEfficiency * netTimeFactor * hourlyFactor;
              
              const totalAvailable = input + currentBacklog;
@@ -545,29 +542,31 @@ export function SchedulerRC() {
        fullWeekResults[dayIdx] = dayResults;
        daysPeakHc[dayIdx] = Math.max(...hourlyTotalHc);
     });
-    return { fullWeekResults, daysHours: weekData.map(d => Array.from({length:24}, (_,i) => (d.shiftStart+i)%24)), daysPeakHc, pIds };
+    return { fullWeekResults, daysHours, daysPeakHc, pIds };
   }, [weekData, processOrder]);
 
   const activeResults = weekSimulation.fullWeekResults[activeDayIndex] || {};
-  const activeHours = weekSimulation.daysHours[activeDayIndex] || [];
   const activePeakHc = weekSimulation.daysPeakHc[activeDayIndex] || 0; 
   
-  // KPI Simples do dia
-  let dayBacklogIn = 0; 
-  let dayBacklogOut = 0;
-  
-  // Backlog de Entrada = Handover
-  const handId = weekSimulation.pIds['handover'];
-  if (handId && activeResults[handId]) {
-      const cells = activeResults[handId];
-      dayBacklogIn = cells[cells.length - 1].backlog;
-  }
+  // --- KPI LOGIC ---
+  const getLastBacklog = (procId: number | undefined) => {
+      if (!procId || !activeResults[procId]) return 0;
+      const cells = activeResults[procId];
+      return cells.length > 0 ? cells[cells.length - 1].backlog : 0;
+  };
 
-  // Backlog de Saída = Label A + Label B (Considerados Outbound)
+  // 1. Backlog Total Inbound (Soma de todos os processos de entrada)
+  let dayBacklogIn = 0;
+  processOrder.forEach(proc => {
+      if (proc.type === 'Inbound') {
+          dayBacklogIn += getLastBacklog(proc.id);
+      }
+  });
+
+  // 2. Backlog Outbound (Labels)
   const labelAId = weekSimulation.pIds['label_a'];
   const labelBId = weekSimulation.pIds['label_b'];
-  if (labelAId && activeResults[labelAId]) dayBacklogOut += activeResults[labelAId][23].backlog; // Pega último horário
-  if (labelBId && activeResults[labelBId]) dayBacklogOut += activeResults[labelBId][23].backlog;
+  const dayBacklogOut = getLastBacklog(labelAId) + getLastBacklog(labelBId);
 
   if (loading) return <div className="flex h-screen items-center justify-center text-blue-600 font-bold animate-pulse">Carregando RC...</div>;
 
@@ -680,7 +679,7 @@ export function SchedulerRC() {
                 </div>
                 <button onClick={handleImportWeeklyForecast} disabled={importing} className="h-12 px-6 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold shadow-lg shadow-blue-200 flex items-center gap-2 transition-all text-xs disabled:opacity-50">
                     {importing ? <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div> : <CloudDownload size={18} />} 
-                    Importar Forecast
+                    Importar RC
                 </button>
             </div>
 
@@ -708,13 +707,13 @@ export function SchedulerRC() {
 
       {/* KPI STRIP */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <KpiCard title="Backlog Handover" value={(dayBacklogIn/1000).toFixed(1) + 'k'} icon={<ArrowDownCircle />} color="green" />
-          <KpiCard title="Backlog Saída (Labels)" value={(dayBacklogOut/1000).toFixed(1) + 'k'} icon={<ArrowUpCircle />} color={dayBacklogOut > 50000 ? 'red' : 'green'} />
+          <KpiCard title="Backlog Inbound" value={(dayBacklogIn/1000).toFixed(1) + 'k'} icon={<ArrowDownCircle />} color="green" />
+          <KpiCard title="Backlog Expedição" value={(dayBacklogOut/1000).toFixed(1) + 'k'} icon={<ArrowUpCircle />} color={dayBacklogOut > 50000 ? 'red' : 'green'} />
           <KpiCard title="Pico de Pessoas" value={activePeakHc} icon={<Users />} color="blue" />
           <KpiCard title="Eficiência Média" value="98%" icon={<TrendingUp />} color="purple" />
       </div>
 
-      {/* DAYS SELECTOR & GRID */}
+      {/* DAYS SELECTOR */}
       <div className="w-full">
         <div className="flex gap-4 overflow-x-auto pb-6 pt-2 px-2 snap-x hide-scrollbar w-full">
             {DAYS_OF_WEEK.map((day, idx) => {
@@ -746,6 +745,7 @@ export function SchedulerRC() {
         </div>
       </div>
 
+      {/* SHIFT & GRID */}
       <div className="bg-white border border-gray-200 rounded-2xl shadow-xl overflow-hidden">
         <div className="p-6 border-b border-gray-100 bg-gray-50/50 grid grid-cols-1 lg:grid-cols-12 gap-6 items-end">
             <div className="lg:col-span-2">
@@ -760,7 +760,7 @@ export function SchedulerRC() {
             <div className="lg:col-span-10 overflow-x-auto">
                 <label className="text-xs font-bold text-gray-500 uppercase mb-2 block">Matriz de Eficiência Horária (%)</label>
                 <div className="flex gap-1">
-                    {activeHours.map(h => (
+                    {weekSimulation.daysHours[activeDayIndex].map(h => (
                         <div key={h} className="flex-1 min-w-[45px]">
                             <div className="text-[10px] text-center text-gray-400 font-medium mb-1">{h.toString().padStart(2, '0')}h</div>
                             <input type="text" className={`w-full text-center text-xs font-bold py-2 rounded-lg border focus:ring-2 focus:ring-offset-1 outline-none transition-all ${currentDayData.efficiencyMatrix[h] < 100 ? 'bg-red-50 text-red-600 border-red-100 focus:ring-red-200' : 'bg-white text-gray-600 border-gray-200 focus:ring-blue-100 focus:border-blue-400'}`} value={currentDayData.efficiencyMatrix[h] ?? 100} onChange={e => handleEfficiencyChange(h, e.target.value)} />
@@ -784,9 +784,23 @@ export function SchedulerRC() {
                                 <div>
                                     <h3 className="font-bold text-lg text-gray-800">{proc.name}</h3>
                                     <div className="flex items-center gap-3 mt-1 text-xs">
-                                        <div className="flex items-center gap-1 bg-gray-100 px-2 py-0.5 rounded text-gray-600" title="Produtividade Padrão"><Zap size={10} className="text-yellow-500"/> <span className="font-bold">{proc.standardProductivity}</span></div>
-                                        <div className="flex items-center gap-1 bg-gray-100 px-2 py-0.5 rounded text-gray-600" title="Eficiência do Processo"><Activity size={10} className="text-blue-500"/> <span className="font-bold">{((proc.efficiency ?? 1) * 100).toFixed(0)}%</span></div>
-                                        <div className="flex items-center gap-1 bg-gray-100 px-2 py-0.5 rounded text-gray-600" title="Tempo de Deslocamento (min)"><Clock size={10} className="text-orange-500"/> <span className="font-bold">{proc.travelTime ?? 0}'</span></div>
+                                        <div className="flex items-center gap-1 bg-gray-100 px-2 py-0.5 rounded text-gray-600" title="Produtividade Padrão">
+                                            <Zap size={10} className="text-yellow-500"/> 
+                                            <span className="font-bold">{proc.standardProductivity}</span>
+                                        </div>
+                                        <div className="flex items-center gap-1 bg-gray-100 px-2 py-0.5 rounded text-gray-600" title="Eficiência do Processo">
+                                            <Activity size={10} className="text-blue-500"/> 
+                                            <span className="font-bold">{((proc.efficiency ?? 1) * 100).toFixed(0)}%</span>
+                                        </div>
+                                        <div className="flex items-center gap-1 bg-gray-100 px-2 py-0.5 rounded text-gray-600" title="Tempo de Deslocamento (min)">
+                                            <Clock size={10} className="text-orange-500"/> 
+                                            <span className="font-bold">{proc.travelTime ?? 0}'</span>
+                                        </div>
+                                        <div className="flex items-center gap-1 pl-2 border-l border-gray-300">
+                                            <span className="font-bold text-gray-400 uppercase">Split:</span>
+                                            <input type="number" className="w-10 bg-white border border-gray-200 text-center font-bold rounded py-0.5 focus:border-blue-600 outline-none" value={settings.split} onChange={e => handleParentSettingChange(proc.id, 'split', Number(e.target.value))} />
+                                            <span className="text-gray-400">%</span>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -800,18 +814,18 @@ export function SchedulerRC() {
                                         <thead className="bg-gray-50">
                                             <tr>
                                                 <th scope="col" className="sticky left-0 z-20 bg-gray-50 py-3 pl-4 pr-3 text-left text-xs font-bold uppercase tracking-wide text-gray-500 w-[200px] border-r border-gray-200 shadow-[4px_0_12px_-4px_rgba(0,0,0,0.1)]">Detalhe / Hora</th>
-                                                {activeHours.map(h => (<th key={h} className="px-2 py-3 text-center text-[10px] font-bold text-gray-400 border-r border-gray-100 min-w-[60px]">{h.toString().padStart(2, '0')}:00</th>))}
+                                                {weekSimulation.daysHours[activeDayIndex].map(h => (<th key={h} className="px-2 py-3 text-center text-[10px] font-bold text-gray-400 border-r border-gray-100 min-w-[60px]">{h.toString().padStart(2, '0')}:00</th>))}
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-gray-200 bg-white">
                                             <tr className="bg-white">
                                                 <td className="sticky left-0 z-20 bg-white py-3 pl-4 pr-3 text-sm font-bold text-gray-800 border-r border-gray-200 border-l-4 border-l-blue-600"><div className="flex items-center gap-2"><Users size={14} className="text-blue-600"/> Diretos</div></td>
-                                                {activeHours.map(h => (<td key={h} className="p-1 border-r border-gray-100"><input type="text" className="w-full text-center font-bold text-gray-800 bg-gray-50 rounded-md py-1.5 focus:bg-white focus:ring-2 focus:ring-blue-100 outline-none transition-all text-xs" value={currentDayData.hcMatrix[`P-${proc.id}-${h}`] || 0} onChange={e => handleHcChange(`P-${proc.id}`, h, e.target.value)} /></td>))}
+                                                {weekSimulation.daysHours[activeDayIndex].map(h => (<td key={h} className="p-1 border-r border-gray-100"><input type="text" className="w-full text-center font-bold text-gray-800 bg-gray-50 rounded-md py-1.5 focus:bg-white focus:ring-2 focus:ring-blue-100 outline-none transition-all text-xs" value={currentDayData.hcMatrix[`P-${proc.id}-${h}`] || 0} onChange={e => handleHcChange(`P-${proc.id}`, h, e.target.value)} /></td>))}
                                             </tr>
                                             {proc.subprocesses && proc.subprocesses.map(sub => (
                                                 <tr key={sub.id} className="bg-gray-50/30">
                                                     <td className="sticky left-0 z-20 bg-gray-50/50 py-2 pl-8 pr-3 text-xs font-medium text-gray-500 border-r border-gray-200 flex items-center gap-2"><CornerDownRight size={12} className="text-gray-300"/> {sub.name}</td>
-                                                    {activeHours.map(h => (<td key={h} className="p-1 border-r border-gray-100"><input type="text" className="w-full text-center text-gray-500 bg-transparent rounded-md py-1 focus:bg-white focus:ring-1 focus:ring-gray-300 outline-none transition-all text-xs" value={currentDayData.hcMatrix[`S-${sub.id}-${h}`] || 0} onChange={e => handleHcChange(`S-${sub.id}`, h, e.target.value)} /></td>))}
+                                                    {weekSimulation.daysHours[activeDayIndex].map(h => (<td key={h} className="p-1 border-r border-gray-100"><input type="text" className="w-full text-center text-gray-500 bg-transparent rounded-md py-1 focus:bg-white focus:ring-1 focus:ring-gray-300 outline-none transition-all text-xs" value={currentDayData.hcMatrix[`S-${sub.id}-${h}`] || 0} onChange={e => handleHcChange(`S-${sub.id}`, h, e.target.value)} /></td>))}
                                                 </tr>
                                             ))}
                                             <tr className="bg-gray-100/50">
@@ -840,12 +854,26 @@ export function SchedulerRC() {
   );
 }
 
-// Card KPI
+// Componente de Card KPI
 function KpiCard({ title, value, icon, color, sub }: any) {
-    const colorMap: any = { blue: 'text-blue-600 bg-blue-50 border-blue-100', orange: 'text-orange-600 bg-orange-50 border-orange-100', purple: 'text-purple-600 bg-purple-50 border-purple-100', green: 'text-green-600 bg-green-50 border-green-100', red: 'text-red-600 bg-red-50 border-red-100' };
+    const colorMap: any = {
+        blue: 'text-blue-600 bg-blue-50 border-blue-100',
+        orange: 'text-orange-600 bg-orange-50 border-orange-100',
+        purple: 'text-purple-600 bg-purple-50 border-purple-100',
+        green: 'text-green-600 bg-green-50 border-green-100',
+        red: 'text-red-600 bg-red-50 border-red-100',
+    };
+    
     return (
         <div className={`bg-white p-5 rounded-2xl border-b-4 shadow-sm flex items-start justify-between hover:shadow-md transition-all group ${colorMap[color].replace('bg-', 'border-b-')}`}>
-            <div><p className="text-xs font-bold text-gray-400 uppercase tracking-wide group-hover:text-gray-600 transition-colors">{title}</p><h3 className="text-3xl font-black text-gray-800 mt-1">{value}</h3>{sub && <div className="flex items-center gap-1 mt-2"><Info size={12} className="text-gray-300"/><p className="text-[10px] font-bold text-gray-400">{sub}</p></div>}</div><div className={`p-3 rounded-xl ${colorMap[color]}`}>{icon}</div>
+            <div>
+                <p className="text-xs font-bold text-gray-400 uppercase tracking-wide group-hover:text-gray-600 transition-colors">{title}</p>
+                <h3 className="text-3xl font-black text-gray-800 mt-1">{value}</h3>
+                {sub && <div className="flex items-center gap-1 mt-2"><Info size={12} className="text-gray-300"/><p className="text-[10px] font-bold text-gray-400">{sub}</p></div>}
+            </div>
+            <div className={`p-3 rounded-xl ${colorMap[color]}`}>
+                {icon}
+            </div>
         </div>
     );
 }
