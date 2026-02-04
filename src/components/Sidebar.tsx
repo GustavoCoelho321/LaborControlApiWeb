@@ -10,13 +10,13 @@ import {
   BrainCircuit
 } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { useState, useEffect } from 'react'; // <--- Adicione useState e useEffect
+import { useState, useEffect } from 'react';
 import dhlLogo from '../assets/Dhl_Logo.png';
 
-// --- HELPER PARA LER O JWT SEM BIBLIOTECA ---
-function getUserRole(): string | null {
+// --- HELPER PARA LER O JWT (ROLE + NOME) ---
+function getUserData() {
   const token = localStorage.getItem('token');
-  if (!token) return null;
+  if (!token) return { role: null, name: '' };
 
   try {
     const base64Url = token.split('.')[1];
@@ -27,32 +27,48 @@ function getUserRole(): string | null {
 
     const decoded = JSON.parse(jsonPayload);
     
-    // O .NET geralmente salva a role nesta chave longa, ou simplesmente "role"
-    return decoded["http://schemas.microsoft.com/ws/2008/06/identity/claims/role"] || decoded["role"] || null;
+    // Tenta pegar a role nas chaves padrões do .NET Identity ou chave simples
+    const role = decoded["http://schemas.microsoft.com/ws/2008/06/identity/claims/role"] || decoded["role"] || null;
+    
+    // Tenta pegar o nome (unique_name ou name)
+    const name = decoded["http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name"] || decoded["unique_name"] || decoded["name"] || "Usuário";
+
+    return { role, name };
   } catch (error) {
-    return null;
+    return { role: null, name: '' };
   }
 }
 
 export function Sidebar() {
   const navigate = useNavigate();
   const location = useLocation();
-  const [isAdmin, setIsAdmin] = useState(false); // <--- Estado para controle
+  
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [userName, setUserName] = useState('');
 
-  // Verifica a Role ao carregar a Sidebar
+  // Carrega dados do usuário ao montar
   useEffect(() => {
-    const role = getUserRole();
+    const { role, name } = getUserData();
     setIsAdmin(role === 'Admin');
+    setUserName(name); // Define o nome extraído do token
   }, []);
 
   const handleLogout = () => {
     if(window.confirm("Deseja realmente sair do sistema?")) {
       localStorage.removeItem('token');
+      localStorage.removeItem('user_data');
       navigate('/login');
     }
   };
 
   const isActive = (path: string) => location.pathname === path;
+
+  // Gera as iniciais para o avatar
+  const getInitials = (name: string) => {
+      const parts = name.split(' ');
+      if (parts.length === 1) return parts[0].substring(0, 2).toUpperCase();
+      return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  };
 
   return (
     <>
@@ -186,28 +202,33 @@ export function Sidebar() {
         <div className="p-4 bg-gradient-to-r from-gray-50 to-white border-t border-gray-200 relative overflow-hidden">
           <div className="absolute inset-0 opacity-5" style={{backgroundImage: `repeating-linear-gradient(45deg, transparent, transparent 10px, rgba(0,0,0,0.1) 10px, rgba(0,0,0,0.1) 11px)`}}></div>
           
-          {/* BADGE ML IA */}
-          <div className="mb-4">
-            <div className="bg-gradient-to-r from-gray-900 to-gray-800 rounded-xl p-2.5 flex items-center justify-center gap-2 shadow-md border border-gray-700 group relative overflow-hidden">
-                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-1000"></div>
-                <BrainCircuit size={14} className="text-purple-400 group-hover:text-purple-300 transition-colors animate-pulse" />
-                <span className="text-[10px] font-bold text-gray-300 uppercase tracking-wider">
-                    Powered by <span className="text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-400 font-black">ML IA</span>
+          {/* --- BADGE ML IA (CLEAN VERSION) --- */}
+          <div className="mb-4 flex justify-center">
+            <div className="bg-purple-50 border border-purple-100 rounded-lg py-1.5 px-3 flex items-center justify-center gap-2 shadow-sm w-full">
+                <BrainCircuit size={14} className="text-purple-500" />
+                <span className="text-[10px] font-semibold text-purple-900 tracking-wide">
+                    Powered by <span className="font-black text-purple-600">ML IA</span>
                 </span>
             </div>
           </div>
+          {/* --------------------------------------- */}
 
-          <div className="relative z-10 flex items-center gap-3 mb-4 px-2 group cursor-pointer">
+          <div className="relative z-10 flex items-center gap-3 mb-4 px-1 group cursor-pointer">
             <div className="relative">
-              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#D40511] to-[#FF0000] flex items-center justify-center text-white font-bold shadow-lg ring-2 ring-white group-hover:scale-110 transition-transform duration-300">
-                {isAdmin ? 'AD' : 'US'}
+              {/* Avatar com as iniciais do Nome */}
+              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#D40511] to-[#FF0000] flex items-center justify-center text-white font-bold shadow-lg ring-2 ring-white group-hover:scale-110 transition-transform duration-300 text-xs">
+                {getInitials(userName)}
               </div>
               <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-green-500 rounded-full border-2 border-white shadow-sm"></div>
             </div>
+            
             <div className="flex-1 overflow-hidden">
-              <h4 className="text-sm font-bold text-gray-800 truncate group-hover:text-[#D40511] transition-colors">
-                  {isAdmin ? 'Administrador' : 'Usuário'}
+              {/* Nome do Usuário Real */}
+              <h4 className="text-sm font-bold text-gray-800 truncate group-hover:text-[#D40511] transition-colors capitalize">
+                  {userName.toLowerCase()}
               </h4>
+              
+              {/* Cargo baseado na Role */}
               <p className="text-[10px] text-gray-500 truncate flex items-center gap-1">
                 <span className="w-1 h-1 bg-[#FFCC00] rounded-full"></span> 
                 {isAdmin ? 'Superintendente' : 'Operacional'}
