@@ -13,3 +13,21 @@ api.interceptors.request.use(config => {
   }
   return config;
 });
+
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    // Tratamento de Erro 429 - Rate Limit
+    if (error.response && error.response.status === 429) {
+      alert("Você está fazendo muitas requisições! Aguarde um momento e tente novamente.");
+      // Opcional: Você pode retornar uma Promise que nunca resolve para "travar" a UI momentaneamente
+      // ou apenas rejeitar o erro.
+    }
+
+    if (error.response && error.response.status === 401) {
+       // Lógica de logout se token expirou
+    }
+
+    return Promise.reject(error);
+  }
+);
